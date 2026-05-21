@@ -1,5 +1,5 @@
 {
-   "钓鱼01": {
+   "钓鱼": {
       "rate_limit": 0,
       "timeout": 0,
       "recognition": {
@@ -8,7 +8,12 @@
             "all_of": ["启动测试"]
          }
       },
-      "next": "启动钓鱼"
+      "action": {
+         "type": "Custom",
+         "param": {
+            "custom_action": "fish"
+         }
+      }
    },
    "弹钢琴_keybord": {
       "rate_limit": 0,

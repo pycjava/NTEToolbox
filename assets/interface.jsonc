@@ -4,7 +4,7 @@
    "description": "异环工具箱",
    "license": "AGPLv3",
    "github": "https://github.com/op200/NTEToolbox",
-   "version": "1.4.1",
+   "version": "1.5.0",
    "resource": [
       {
          "name": "默认",
@@ -73,8 +73,9 @@
       },
       {
          "name": "钓鱼",
-         "entry": "钓鱼01",
+         "entry": "钓鱼",
          "option": [
+            "钓鱼通用设置",
             "溜鱼设置",
             "卖鱼买换饵开关",
             "卖鱼买换饵设置"
@@ -117,6 +118,25 @@
             }
          }
       },
+      "钓鱼通用设置": {
+         "type": "input",
+         "inputs": [
+            {
+               "name": "终止时间",
+               "label": "终止时间",
+               "description": "到达时间后终止该节点，支持 ISO 8601 格式。如果时间早于当前时间，自动改为明天的该时间。示例: `2076-05-04T03:02:01` `03:14:25`",
+               "pipeline_type": "string",
+               "default": ""
+            }
+         ],
+         "pipeline_override": {
+            "钓鱼": {
+               "attach": {
+                  "终止时间": "{终止时间}"
+               }
+            }
+         }
+      },
       "溜鱼设置": {
          "type": "input",
          "inputs": [
@@ -134,14 +154,10 @@
             }
          ],
          "pipeline_override": {
-            "溜鱼": {
-               "action": {
-                  "param": {
-                     "custom_action_param": {
-                        "溜鱼_midpoint_pix_range": "{溜鱼_midpoint_pix_range}",
-                        "溜鱼_midpoint_sleep_time": "{溜鱼_midpoint_sleep_time}"
-                     }
-                  }
+            "钓鱼": {
+               "attach": {
+                  "溜鱼_midpoint_pix_range": "{溜鱼_midpoint_pix_range}",
+                  "溜鱼_midpoint_sleep_time": "{溜鱼_midpoint_sleep_time}"
                }
             }
          }
@@ -151,25 +167,23 @@
          "label": "自动卖鱼买换饵 (抢占鼠标)",
          "description": "无饵或满舱时，按顺序执行 卖鱼 买饵 换饵。由于涉及点击操作，会抢占鼠标",
          "cases": [
-            { "name": "Yes" },
+            {
+               "name": "Yes",
+               "pipeline_override": {
+                  "钓鱼": {
+                     "attach": {
+                        "卖鱼买换饵开关": true
+                     }
+                  }
+               }
+            },
             {
                "name": "No",
                "pipeline_override": {
-                  "满舱": {
-                     "focus": {
-                        "Node.Recognition.Succeeded": {
-                           "content": "钓鱼结束: 渔获已满"
-                        }
-                     },
-                     "next": []
-                  },
-                  "无饵": {
-                     "focus": {
-                        "Node.Recognition.Succeeded": {
-                           "content": "钓鱼结束: 鱼饵用完"
-                        }
-                     },
-                     "next": []
+                  "钓鱼": {
+                     "attach": {
+                        "卖鱼买换饵开关": false
+                     }
                   }
                }
             }
@@ -188,13 +202,9 @@
             }
          ],
          "pipeline_override": {
-            "卖鱼买换饵": {
-               "action": {
-                  "param": {
-                     "custom_action_param": {
-                        "买饵次数": "{买饵次数}"
-                     }
-                  }
+            "钓鱼": {
+               "attach": {
+                  "买饵次数": "{买饵次数}"
                }
             }
          }

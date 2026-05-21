@@ -262,3 +262,7 @@ def type_match[T](val: Any, t: type[T]) -> TypeGuard[T]:
         return any(type_match(val, t) for t in args)
 
     return True
+
+
+class Manual_stop(BaseException):
+    pass

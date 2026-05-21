@@ -19,7 +19,7 @@ __all__ = [
     "fish",
     "piano",
     "setting",
-    "utils"
+    "utils",
 ]
 
 __version__ = utils.get_project_version() or "0.0.0"

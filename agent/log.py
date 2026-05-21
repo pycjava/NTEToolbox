@@ -1,11 +1,12 @@
 """Forked from https://github.com/MAA1999/M9A/blob/1a1dfe8acee4255cf7132786e9964646c7071cad/agent/utils/logger.py"""
 
+import datetime
 import enum
 import html
 import logging
 import sys
 from pathlib import Path
-from typing import Literal, Self, TextIO, override
+from typing import Literal, Self, TextIO, cast, override
 
 from .pienv import env
 
@@ -52,7 +53,7 @@ class Client(enum.Enum):
 
     @classmethod
     def from_name(cls, name: str) -> Self | None:
-        return cls._value2member_map_.get(name)  # pyright: ignore[reportReturnType]
+        return cast("dict[str, Self]", cls._value2member_map_).get(name)
 
 
 _client = Client.from_name(env.client_name.strip().upper())
@@ -97,7 +98,10 @@ class _ConsoleFormatter(logging.Formatter):
             case None:  # 控制台
                 level_color = _ansi_level_color(level_name)
                 color_reset = "\033[0m" if level_color else ""
-                return f"{level_color}{message}{color_reset}"
+                return (
+                    f"{datetime.datetime.now().strftime('%Y.%m.%d %H:%M:%S.%f')[:-4]} "
+                    f"{level_color}{message}{color_reset}"
+                )
             case _:
                 raise ValueError(f"client = {_client!r}")
 
