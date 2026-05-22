@@ -13,11 +13,12 @@ except ModuleNotFoundError:
     log.error("maafw 未安装，执行以下命令以安装或更新: python -m pip install -U maafw")
     sys.exit(Exit_code.import_failed.value)
 
-from . import fish, piano, setting, utils
+from . import fish, piano, rt_asst, setting, utils
 
 __all__ = [
     "fish",
     "piano",
+    "rt_asst",
     "setting",
     "utils",
 ]

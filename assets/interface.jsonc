@@ -4,7 +4,7 @@
    "description": "异环工具箱",
    "license": "AGPLv3",
    "github": "https://github.com/op200/NTEToolbox",
-   "version": "1.5.0",
+   "version": "1.6.0",
    "resource": [
       {
          "name": "默认",
@@ -85,6 +85,11 @@
          "name": "弹钢琴 (键盘输入)",
          "entry": "弹钢琴_keybord",
          "option": ["弹钢琴_keybord_设置"]
+      },
+      {
+         "name": "实时辅助",
+         "entry": "实时辅助",
+         "option": ["实时辅助_自动拾取"]
       }
    ],
    "option": {
@@ -257,6 +262,34 @@
                }
             }
          }
+      },
+      "实时辅助_自动拾取": {
+         "type": "switch",
+         "label": "实时辅助 - 自动拾取",
+         "description": "自动按 F 键拾取",
+         "cases": [
+            {
+               "name": "Yes",
+               "pipeline_override": {
+                  "实时辅助": {
+                     "attach": {
+                        "自动拾取": true
+                     }
+                  }
+               }
+            },
+            {
+               "name": "No",
+               "pipeline_override": {
+                  "实时辅助": {
+                     "attach": {
+                        "自动拾取": false
+                     }
+                  }
+               }
+            }
+         ],
+         "default_case": "Yes"
       }
    }
 }

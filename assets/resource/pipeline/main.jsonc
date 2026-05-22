@@ -39,5 +39,21 @@
             "custom_action_param": null // option 覆写
          }
       }
+   },
+   "实时辅助": {
+      "rate_limit": 0,
+      "timeout": 0,
+      "recognition": {
+         "type": "And",
+         "param": {
+            "all_of": ["启动测试"]
+         }
+      },
+      "action": {
+         "type": "Custom",
+         "param": {
+            "custom_action": "实时辅助"
+         }
+      }
    }
 }

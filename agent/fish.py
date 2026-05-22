@@ -12,18 +12,19 @@ from maa.custom_action import CustomAction
 from maa.define import OCRResult
 
 from .log import log
+from .maafw_tools import get_img
 from .utils import Manual_stop, type_match
 from .virtual_key import Win_virtual_key
 
 if TYPE_CHECKING:
-    import numpy as np
     from maa.context import Context
     from maa.controller import Controller
 
+    from .maafw_tools import Img
+
+
 溜鱼_MAX_RANGE: Final = 120
 溜鱼_GY_ROI: Final = [404, 44, 478, 12]
-
-type Img = np.typing.NDArray
 
 
 @dataclass(kw_only=True, slots=True)
@@ -112,21 +113,6 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Fish_option:
         卖鱼买换饵开关=卖鱼买换饵开关,
         买饵次数=买饵次数,
     )
-
-
-def get_img(controller: Controller, /) -> Img:
-    start_time = time.time()
-    while True:
-        try:
-            img = controller.post_screencap().get(wait=True)
-        except Exception as e:
-            log.debug(e)
-            if time.time() - start_time > 10:
-                log.error("获取截图超时")
-                raise
-            time.sleep(0.5)
-            continue
-        return img
 
 
 def reco_钓鱼按钮(context: Context, img: Img, /) -> bool:
@@ -243,7 +229,7 @@ def 溜鱼(context: Context, option: Fish_option, /) -> None:
 
     for _ in range(溜鱼_MAX_RANGE):
         try:
-            img: np.typing.NDArray = get_img(controller)
+            img: Img = get_img(controller)
         except Exception as e:
             log.debug(f"获取截图失败: {e}")
             continue

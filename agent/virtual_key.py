@@ -248,6 +248,10 @@ class Win_virtual_key(enum.Enum):
     VK_PA1 = Value(0xFD, "PA1 key")
     VK_OEM_CLEAR = Value(0xFE, "Clear key")
 
+    def tap(self, hwnd: wintypes.HWND | int) -> None:
+        """点击 key"""
+        self.Msg(hwnd, [self]).tap()
+
     class Msg(contextlib.AbstractContextManager):
         def __init__(
             self,
@@ -324,6 +328,7 @@ class Win_virtual_key(enum.Enum):
             return None
 
         class Post_msg_msg(enum.Enum):
+            WM_CLOSE = 0x0010  # 请求关闭窗口
             WM_KEYDOWN = 0x0100  # 按键按下
             WM_KEYUP = 0x0101  # 按键释放
             WM_CHAR = 0x0102  # 字符输入
@@ -332,7 +337,7 @@ class Win_virtual_key(enum.Enum):
             WM_LBUTTONUP = 0x0202  # 左键释放
             WM_RBUTTONDOWN = 0x0204  # 右键按下
             WM_RBUTTONUP = 0x0205  # 右键释放
-            WM_CLOSE = 0x0010  # 请求关闭窗口
+            WM_MOUSEWHEEL = 0x020A  # 滚轮
 
         def _make_key_lparam(
             self,
@@ -456,10 +461,16 @@ class Win_virtual_key(enum.Enum):
             if self.force_focus:
                 self._restore_focus()
 
+        def tap(self, keys: Iterable[Win_virtual_key | int] | None = None) -> None:
+            """点击 key"""
+            self.down(keys)
+            self.up(keys)
+
         def click(
             self,
             x: int,
             y: int,
+            /,
             button: Literal["left", "right"] = "left",
         ) -> None:
             """
@@ -498,3 +509,30 @@ class Win_virtual_key(enum.Enum):
             # 发送按下与抬起，完成一次完整点击
             self._send_msg(down_msg, wparam_down, lparam)
             self._send_msg(up_msg, 0, lparam)
+
+        def wheel(self, direction: Literal["up", "down"], amount: int = 1, /) -> None:
+            """
+            **AI** 向 self.hwnd 指定的窗口发送 WM_MOUSEWHEEL 消息以模拟滚动。
+
+            :param direction: 'up' 表示向上 (向前) 滚动，'down' 表示向下 (向后) 滚动。
+            :param amount: 滚动格数，默认为 1。每格对应 WHEEL_DELTA (120)。
+            """
+            # 1. 构造 wParam
+            #    高16位：滚轮增量。向上滚动为正，向下滚动为负。
+            #    低16位：修饰键状态。当前我们不使用任何修饰键，填0。
+            delta = amount * 120
+            if direction == "down":
+                delta = -delta  # 向下滚动，传递负值
+            wparam = delta << 16  # 将增量左移16位，放到高16位[reference:8]
+
+            # 2. 构造 lParam
+            #    lParam 包含鼠标光标的屏幕坐标。低16位为X，高16位为Y。
+            #    这里我们简单地传递 0, 0 作为坐标。
+            lparam = 0
+
+            # 3. 使用 SendMessage 或 PostMessage 发送消息
+            if self.force_focus:
+                self._force_focus()
+            self._send_msg(self.Post_msg_msg.WM_MOUSEWHEEL, wparam, lparam)
+            if self.force_focus:
+                self._restore_focus()
