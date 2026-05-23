@@ -263,7 +263,7 @@ jobs:
             fi
           done
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2.2.2
         with:
           files: release_assets/*
           tag_name: ${{ needs.meta.outputs.tag }}
