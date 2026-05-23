@@ -4,7 +4,8 @@ import traceback
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, override
+from functools import lru_cache
+from typing import TYPE_CHECKING, Final, Literal, override
 
 from maa.agent.agent_server import AgentServer
 from maa.custom_action import CustomAction
@@ -22,11 +23,15 @@ if TYPE_CHECKING:
     from .maafw_tools import Img
 
 
-STR_EQ = {
+STR_EQ: Final = {
     "打开",
     "开门",
 }
-STR_IN = (
+STR_NOT_EQ: Final = {
+    "坐下",
+}
+assert all((s not in STR_NOT_EQ) for s in STR_EQ)
+STR_IN: Final = (
     "卡",
     "永恒之心",
     "宝石",
@@ -59,11 +64,28 @@ STR_IN = (
     "气泡水",
     "银行文件",
     "漫画",
+    # 大世界
+    "劲爽",
+    "包裹",  # 避役的包裹
+    "遗失",  # 钱包、储物柜钥匙
+    "速食",  # 早餐袋
+    "巧克力",
+    "一箱",  # 一箱xx
 )
-STR_NOT_IN = (
+STR_NOT_IN: Final = (
     "激活",
     "使用",
 )
+assert all(all((sni not in si) for sni in STR_NOT_IN) for si in STR_IN)
+
+
+@lru_cache(maxsize=256)
+def is_自动拾取_need_str(text: str, /) -> bool:
+    return (
+        (text not in STR_NOT_EQ)
+        and all((sni not in text) for sni in STR_NOT_IN)
+        and ((text in STR_EQ) or any((si in text) for si in STR_IN))
+    )
 
 
 @dataclass(kw_only=True, slots=True)
@@ -132,14 +154,15 @@ def reco_自动拾取(
         return 自动拾取_type.no
 
     at_all_rt = [r.text for r in at_all_results if r.score > 0.7]
-    if at_all_rt and all(
-        (
-            all((sni not in s) for sni in STR_NOT_IN)
-            and ((s in STR_EQ) or any((si in s) for si in STR_IN))
-        )
-        for s in at_all_rt
-    ):
-        return (自动拾取_type.all, len(at_all_rt))
+    if at_all_rt:
+        if all(
+            at_all_rt_bool := tuple[bool, ...](map(is_自动拾取_need_str, at_all_rt))
+        ):
+            log.debug(at_all_rt)
+            return (自动拾取_type.all, len(at_all_rt))
+        if not any(at_all_rt_bool):
+            # 如果全都不匹配，则提前终止
+            return 自动拾取_type.no
 
     # 判断当前选项
     color_reco_detail = context.run_recognition(
@@ -192,12 +215,7 @@ def reco_自动拾取(
             text = t_all_results[0].text
             log.debug(text)
             return (
-                自动拾取_type.once
-                if (
-                    all((sni not in text) for sni in STR_NOT_IN)
-                    and ((text in STR_EQ) or any((si in text) for si in STR_IN))
-                )
-                else 自动拾取_type.no
+                自动拾取_type.once if is_自动拾取_need_str(text) else 自动拾取_type.no
             )
         case _:
             log.debug("识别到多个字符串，取消按键操作")
@@ -220,14 +238,26 @@ class 实时辅助(CustomAction):
             log.error("获取 hwnd 失败")
             return False
 
-        _ss = time.time()
+        _t_loop = time.time()
         with suppress(Manual_stop):
             while not context.tasker.stopping:
                 controller: Controller = context.tasker.controller
                 img: Img = get_img(controller)
 
                 if option.自动拾取:
-                    match reco_自动拾取(context, img):
+                    _t_fun = time.time()
+                    reco_自动拾取_return = reco_自动拾取(context, img)
+                    if (_t_th := time.time() - _t_fun) > 1:
+                        if reco_自动拾取_return == 自动拾取_type.no:
+                            log.warning(
+                                f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时过长: {_t_th:.3f}s"
+                            )
+                        else:
+                            log.warning(
+                                f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时过长，放弃执行按键: {_t_th:.3f}s"
+                            )
+                            reco_自动拾取_return = 自动拾取_type.no
+                    match reco_自动拾取_return:
                         case 自动拾取_type.once:
                             Win_virtual_key.F.tap(hwnd)
                         case (自动拾取_type.all, num):
@@ -238,11 +268,13 @@ class 实时辅助(CustomAction):
                                 time.sleep(0.05)
                             time.sleep(0.1)
 
-                if (_sth := time.time() - _ss) > 0.3:
-                    if _sth > 0.8:
-                        log.warning(f"{实时辅助.__name__} 单次循环时间过长: {_sth}")
+                if (_t_th := time.time() - _t_loop) > 0.3:
+                    if _t_th > 0.8:
+                        log.warning(
+                            f"{实时辅助.__name__} 单次循环时间过长: {_t_th:.3f}s"
+                        )
                     else:
-                        log.debug(f"{实时辅助.__name__} 单次循环时间: {_sth}")
-                _ss = time.time()
+                        log.debug(f"{实时辅助.__name__} 单次循环时间: {_t_th:.3f}s")
+                _t_loop = time.time()
 
         return True

@@ -248,7 +248,7 @@ class Win_virtual_key(enum.Enum):
     VK_PA1 = Value(0xFD, "PA1 key")
     VK_OEM_CLEAR = Value(0xFE, "Clear key")
 
-    def tap(self, hwnd: wintypes.HWND | int) -> None:
+    def tap(self, hwnd: wintypes.HWND | int, /) -> None:
         """点击 key"""
         self.Msg(hwnd, [self]).tap()
 
