@@ -66,22 +66,22 @@ footer = """
 [git]
 # 过滤提交
 commit_parsers = [
+    { group = "<!-- 00 -->🐛 Bug 修复", message = "(?i)^(?:bug)?fix" },
+    { group = "<!-- 01 -->✨ 新功能", message = "(?i)^feat(?:ure)?" },
+    { group = "<!-- 02 -->✔ 优化", message = "(?i)^(?:improvements?|impr?)" },
+    { group = "<!-- 03 -->🚀 性能优化", message = "(?i)^perf(?:ormance)?" },
+    { group = "<!-- 04 -->🔁 代码重构", message = "(?i)^ref(?:actor)?" },
+    { group = "<!-- 05 -->📚 文档更新", message = "(?i)^doc(?:ument)?s?" },
+    { group = "<!-- 06 -->🎨 样式调整", message = "(?i)^styles?" },
+    { group = "<!-- 07 -->🧪 修改测试代码", message = "(?i)^tests?" },
+    { group = "<!-- 08 -->⚙️ 修改 CI", message = "(?i)^ci" },
+    { group = "<!-- 09 -->🔧 杂项", message = "(?i)^chore" },
+    { group = "<!-- 10 -->🔒 安全", body = ".*security" },
+    { group = "<!-- 11 -->↩ 撤销更改", message = "(?i)^revert" },
+    { group = "<!-- 12 -->📦 依赖更新", message = "(?i)^chore\\(deps?\\)" },
     # 跳过包含 [skip changelog] 的 commit
-    { body = ".*\\[skip changelog\\].*", skip = true },
-    { body = ".*security", group = "<!-- 10 -->🔒 安全" },
-    { message = "(?i)^(?:bug)?fix", group = "<!-- 0 -->🐛 Bug 修复" },
-    { message = "(?i)^(?:improvements?|impr?)", group = "<!-- 2 -->✔ 优化" },
-    { message = "(?i)^chore", group = "<!-- 9 -->🔧 杂项" },
-    { message = "(?i)^chore\\(deps?\\)", group = "📦 依赖更新" },
-    { message = "(?i)^ci", group = "<!-- 8 -->⚙️ 修改 CI" },
-    { message = "(?i)^doc(?:ument)?s?", group = "<!-- 5 -->📚 文档更新" },
-    { message = "(?i)^feat(?:ure)?", group = "<!-- 1 -->✨ 新功能" },
-    { message = "(?i)^perf(?:ormance)?", group = "<!-- 3 -->🚀 性能优化" },
-    { message = "(?i)^ref(?:actor)?", group = "<!-- 4 -->🔁 代码重构" },
-    { message = "(?i)^revert", group = "<!-- 11 -->↩ 撤销更改" },
-    { message = "(?i)^styles?", group = "<!-- 6 -->🎨 样式调整" },
-    { message = "(?i)^tests?", group = "<!-- 7 -->🧪 修改测试代码" },
-    { message = ".*\\[skip changelog\\].*", skip = true },
+    { skip = true, body = ".*\\[skip changelog\\].*" },
+    { skip = true, message = ".*\\[skip changelog\\].*" },
 ]
 conventional_commits = true # 使用约定式提交格式
 filter_unconventional = false # 不过滤非约定式提交

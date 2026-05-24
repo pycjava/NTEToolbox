@@ -4,7 +4,7 @@
    "description": "异环工具箱",
    "license": "AGPLv3",
    "github": "https://github.com/op200/NTEToolbox",
-   "version": "1.6.1",
+   "version": "1.6.2",
    "resource": [
       {
          "name": "默认",

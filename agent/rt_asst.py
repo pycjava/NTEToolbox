@@ -29,8 +29,8 @@ STR_EQ: Final = {
 }
 STR_NOT_EQ: Final = {
     "坐下",
+    "驾驶",
 }
-assert all((s not in STR_NOT_EQ) for s in STR_EQ)
 STR_IN: Final = (
     "卡",
     "永恒之心",
@@ -68,15 +68,24 @@ STR_IN: Final = (
     "劲爽",
     "包裹",  # 避役的包裹
     "遗失",  # 钱包、储物柜钥匙
+    "公文包",
     "速食",  # 早餐袋
     "巧克力",
     "一箱",  # 一箱xx
+    "再来一口",
 )
 STR_NOT_IN: Final = (
     "激活",
     "使用",
 )
-assert all(all((sni not in si) for sni in STR_NOT_IN) for si in STR_IN)
+assert all(
+    (seq not in STR_NOT_EQ) and all((sni not in seq) for sni in STR_NOT_IN)
+    for seq in STR_EQ
+)
+assert all(
+    all((sni not in si) for sni in STR_NOT_IN) and (si not in STR_NOT_EQ)
+    for si in STR_IN
+)
 
 
 @lru_cache(maxsize=256)
