@@ -100,6 +100,7 @@ def is_自动拾取_need_str(text: str, /) -> bool:
 @dataclass(kw_only=True, slots=True)
 class Rt_asst_option:
     自动拾取: bool
+    永远拾取: bool
 
 
 def get_option(context: Context, argv: CustomAction.RunArg, /) -> Rt_asst_option:
@@ -114,12 +115,17 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Rt_asst_option
         自动拾取 = attach.get("自动拾取")
         if not isinstance(自动拾取, bool):
             raise TypeError("自动拾取 类型不是 bool")
+
+        永远拾取 = attach.get("永远拾取")
+        if not isinstance(永远拾取, bool):
+            raise TypeError("永远拾取 类型不是 bool")
     except Exception as e:
         log.error(f"选项初始化错误: {e} {e!r}\n{traceback.format_exc()}")
         raise
 
     return Rt_asst_option(
         自动拾取=自动拾取,
+        永远拾取=永远拾取,
     )
 
 
@@ -231,6 +237,44 @@ def reco_自动拾取(
             return 自动拾取_type.no
 
 
+def pick_with_wheel(hwnd: int, /):
+    Win_virtual_key.F.tap(hwnd)
+    # ctypes.windll.user32.mouse_event(0x0800, 0, 0, -120, 0)
+    Win_virtual_key.Msg(hwnd).wheel("down")
+    time.sleep(0.03)
+
+
+拾取轮间间隔: Final[float] = 0.15  # 过小会无法拾取
+
+
+def 自动拾取(context: Context, img: Img, hwnd: int, /) -> None:
+    t_start = time.time()
+    reco_自动拾取_return = reco_自动拾取(context, img)
+    if (t_th_reco := time.time() - t_start) > 0.3:
+        log.warning(
+            f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时过长"
+            + ("" if reco_自动拾取_return == 自动拾取_type.no else "，放弃执行按键")
+            + f": {t_th_reco:.3f}s"
+        )
+        return
+
+    if reco_自动拾取_return == 自动拾取_type.no:
+        return
+    if t_th_reco < 拾取轮间间隔:
+        log.debug(
+            f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时小于 拾取轮间间隔:"
+            f"{t_th_reco:.3f} < {拾取轮间间隔}"
+        )
+        time.sleep(拾取轮间间隔 - t_th_reco)
+
+    match reco_自动拾取_return:
+        case 自动拾取_type.once:
+            Win_virtual_key.F.tap(hwnd)
+        case (自动拾取_type.all, num):
+            for _ in range(num):
+                pick_with_wheel(hwnd)
+
+
 @AgentServer.custom_action("实时辅助")
 class 实时辅助(CustomAction):
     @override
@@ -248,42 +292,36 @@ class 实时辅助(CustomAction):
             return False
 
         _t_loop = time.time()
+
         with suppress(Manual_stop):
             while not context.tasker.stopping:
-                controller: Controller = context.tasker.controller
-                img: Img = get_img(controller)
-
                 if option.自动拾取:
-                    _t_fun = time.time()
-                    reco_自动拾取_return = reco_自动拾取(context, img)
-                    if (_t_th := time.time() - _t_fun) > 1:
-                        if reco_自动拾取_return == 自动拾取_type.no:
+                    if option.永远拾取:
+                        if Win_virtual_key.F.is_global_key_down():
+                            time.sleep(0.002)
+                            continue
+                        for _ in range(6):
+                            pick_with_wheel(hwnd)
+                        time.sleep(拾取轮间间隔)
+                        continue
+
+                    # 以下需要 API
+                    controller: Controller = context.tasker.controller
+                    img: Img = get_img(controller)
+
+                    # 自动拾取
+                    自动拾取(context, img, hwnd)
+
+                    # 本轮循环结束
+                    if (_t_th := time.time() - _t_loop) > 0.3:
+                        if _t_th > 0.8:
                             log.warning(
-                                f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时过长: {_t_th:.3f}s"
+                                f"{实时辅助.__name__} 单次循环时间过长: {_t_th:.3f}s"
                             )
                         else:
-                            log.warning(
-                                f"{实时辅助.__name__} {reco_自动拾取.__name__} 耗时过长，放弃执行按键: {_t_th:.3f}s"
-                            )
-                            reco_自动拾取_return = 自动拾取_type.no
-                    match reco_自动拾取_return:
-                        case 自动拾取_type.once:
-                            Win_virtual_key.F.tap(hwnd)
-                        case (自动拾取_type.all, num):
-                            for _ in range(num):
-                                Win_virtual_key.F.tap(hwnd)
-                                # ctypes.windll.user32.mouse_event(0x0800, 0, 0, -120, 0)
-                                Win_virtual_key.Msg(hwnd).wheel("down")
-                                time.sleep(0.05)
-                            time.sleep(0.1)
-
-                if (_t_th := time.time() - _t_loop) > 0.3:
-                    if _t_th > 0.8:
-                        log.warning(
-                            f"{实时辅助.__name__} 单次循环时间过长: {_t_th:.3f}s"
-                        )
-                    else:
-                        log.debug(f"{实时辅助.__name__} 单次循环时间: {_t_th:.3f}s")
-                _t_loop = time.time()
+                            log.debug(f"{实时辅助.__name__} 单次循环时间: {_t_th:.3f}s")
+                    _t_loop = time.time()
+                    continue
+                time.sleep(0.05)
 
         return True

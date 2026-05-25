@@ -252,6 +252,9 @@ class Win_virtual_key(enum.Enum):
         """点击 key"""
         self.Msg(hwnd, [self]).tap()
 
+    def is_global_key_down(self) -> bool:
+        return self.Msg.is_global_key_down(self)
+
     class Msg(contextlib.AbstractContextManager):
         def __init__(
             self,
@@ -536,3 +539,22 @@ class Win_virtual_key(enum.Enum):
             self._send_msg(self.Post_msg_msg.WM_MOUSEWHEEL, wparam, lparam)
             if self.force_focus:
                 self._restore_focus()
+
+        @staticmethod
+        def is_global_key_down(key: Win_virtual_key | int) -> bool:
+            """
+            **AI** 检测全局键盘按键是否当前被物理按下。
+
+            参数
+            ----------
+            key : Win_virtual_key | int
+                要检测的虚拟键码或 Win_virtual_key 枚举成员。
+
+            返回
+            -------
+            bool
+                True 表示按键当前被按住，False 表示未按下。
+            """
+            vk_code = key if isinstance(key, int) else key.value.code
+            # 最高位 (0x8000) 为 1 时表示按键当前被按下
+            return (ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000) != 0

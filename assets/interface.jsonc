@@ -4,7 +4,7 @@
    "description": "异环工具箱",
    "license": "AGPLv3",
    "github": "https://github.com/op200/NTEToolbox",
-   "version": "1.6.2",
+   "version": "1.7.0",
    "resource": [
       {
          "name": "默认",
@@ -89,7 +89,10 @@
       {
          "name": "实时辅助",
          "entry": "实时辅助",
-         "option": ["实时辅助_自动拾取"]
+         "option": [
+            "实时辅助_自动拾取",
+            "实时辅助_自动拾取_永远拾取"
+         ]
       }
    ],
    "option": {
@@ -98,14 +101,14 @@
          "inputs": [
             {
                "name": "debug_mode_switch",
-               "label": "debug 模式开关 (1 为开 0 为关)",
+               "label": "debug 模式开关 (`1` 为开 `0` 为关)",
                "pipeline_type": "int",
                "default": "0"
             },
             {
                "name": "logging_switch",
-               "label": "日志开关 (1 为开 0 为关)",
-               "description": "关闭后 debug 目录不再写入 maafw 运行时日志。本质上是修改 maa_option.json 的 logging，所以重启后才能生效",
+               "label": "日志开关 (`1` 为开 `0` 为关)",
+               "description": "关闭后 debug 目录不再写入 maafw 运行时日志。本质上是修改 maa_option.json 的 `logging`，所以重启后才能生效",
                "pipeline_type": "int",
                "default": "1"
             }
@@ -170,7 +173,7 @@
       "卖鱼买换饵开关": {
          "type": "switch",
          "label": "自动卖鱼买换饵 (抢占鼠标)",
-         "description": "无饵或满舱时，按顺序执行 卖鱼 买饵 换饵。由于涉及点击操作，会抢占鼠标",
+         "description": "无饵或满舱时，按顺序执行 `卖鱼` `买饵` `换饵`。由于涉及点击操作，会抢占鼠标",
          "cases": [
             {
                "name": "Yes",
@@ -201,7 +204,7 @@
             {
                "name": "买饵次数",
                "label": "买饵次数",
-               "description": "次数 n 代表买 n * 99 个饵",
+               "description": "次数 `n` 代表买 `n * 99` 个饵",
                "pipeline_type": "int",
                "default": "4"
             }
@@ -229,19 +232,19 @@
             },
             {
                "name": "piano_mode",
-               "label": "钢琴模式 (只能填 21 或 36)",
+               "label": "钢琴模式 (只能填 `21` 或 `36`)",
                "pipeline_type": "string",
                "default": "36"
             },
             {
                "name": "timeout_mode",
-               "label": "超时模式 (只能填 同步时轴 或 速率不变)",
+               "label": "超时模式 (只能填 `同步时轴` 或 `速率不变`)",
                "pipeline_type": "string",
                "default": "速率不变"
             },
             {
                "name": "use_custom_winapi",
-               "label": "使用自定义的 WinAPI (1 为开 0 为关)",
+               "label": "使用自定义的 WinAPI (`1` 为开 `0` 为关)",
                "description": "使用自定义的 WinAPI 代替 maafw 的键盘输入 API, 以解决输入延迟问题。会导致指针光标闪烁但不会抢占鼠标",
                "pipeline_type": "int",
                "default": "1"
@@ -265,7 +268,7 @@
       },
       "实时辅助_自动拾取": {
          "type": "switch",
-         "label": "实时辅助 - 自动拾取",
+         "label": "自动拾取",
          "description": "自动按 F 键拾取",
          "cases": [
             {
@@ -290,6 +293,34 @@
             }
          ],
          "default_case": "Yes"
+      },
+      "实时辅助_自动拾取_永远拾取": {
+         "type": "switch",
+         "label": "自动拾取 - 永远拾取",
+         "description": "永远拾取，不判断屏幕内容。按住 F 时关闭 `自动拾取`。适合粉爪等场景（注意避开盔甲等）。仅在启用 `自动拾取` 时有效",
+         "cases": [
+            {
+               "name": "Yes",
+               "pipeline_override": {
+                  "实时辅助": {
+                     "attach": {
+                        "永远拾取": true
+                     }
+                  }
+               }
+            },
+            {
+               "name": "No",
+               "pipeline_override": {
+                  "实时辅助": {
+                     "attach": {
+                        "永远拾取": false
+                     }
+                  }
+               }
+            }
+         ],
+         "default_case": "No"
       }
    }
 }
