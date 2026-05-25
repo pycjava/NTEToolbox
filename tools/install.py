@@ -29,8 +29,13 @@ def parse_args() -> argparse.Namespace:
         choices=["aarch64", "x86_64"],
         help="Target architecture",
     )
+    # 改为可选参数，非 Android 平台必须提供
     parser.add_argument(
-        "--gui", required=True, choices=["mfaa", "mxu"], help="GUI type (mfaa or mxu)"
+        "--gui",
+        required=False,
+        default=None,
+        choices=["mfaa", "mxu"],
+        help="GUI type (mfaa or mxu), required for non-Android platforms",
     )
     return parser.parse_args()
 
@@ -72,6 +77,11 @@ def install_deps() -> None:
             dirs_exist_ok=True,
         )
         return
+
+    # 非 Android 平台必须指定 GUI
+    if gui is None:
+        print("Error: --gui is required for non-Android platforms.")
+        sys.exit(1)
 
     ignore_patterns = shutil.ignore_patterns(
         "*MaaDbgControlUnit*",
@@ -173,7 +183,7 @@ if __name__ == "__main__":
     version: str = args.version
     os_name: str = args.os
     arch: str = args.arch
-    gui: str = args.gui
+    gui: str | None = args.gui
 
     install_deps()
     install_resource()
