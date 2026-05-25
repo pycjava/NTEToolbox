@@ -91,17 +91,30 @@ jobs:
           extract: true
 
       # --------------------- MFAA ---------------------
+      # 在 bash 中生成正确的文件名模式，避免 YAML 引号嵌套问题
+      - name: Prepare MFAA file pattern
+        if: matrix.os != 'android'
+        id: mfaa_pattern
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            win)   MFAA_OS="win" ;;
+            macos) MFAA_OS="osx" ;;
+            linux) MFAA_OS="linux" ;;
+          esac
+          case "${{ matrix.arch }}" in
+            x86_64)  MFAA_ARCH="x64" ;;
+            aarch64) MFAA_ARCH="arm64" ;;
+          esac
+          echo "pattern=MFAAvalonia-*-${MFAA_OS}-${MFAA_ARCH}*" >> $GITHUB_OUTPUT
+
       - name: Download MFAAvalonia
         if: matrix.os != 'android'
         id: download_mfa
         uses: robinraju/release-downloader@v1
         with:
           repository: SweetSmellFox/MFAAvalonia
-          fileName: |
-            "MFAAvalonia-*-${{ (matrix.os == 'win' && 'win') || (matrix.os ==
-            'macos' && 'osx') || (matrix.os == 'linux' && 'linux') }}-${{
-            (matrix.arch == 'x86_64' && 'x64') || (matrix.arch == 'aarch64' &&
-            'arm64') }}*"
+          fileName: ${{ steps.mfaa_pattern.outputs.pattern }}
           latest: ${{ env.MFAA_VERSION == '' }}
           tag: ${{ env.MFAA_VERSION }}
           out-file-path: "MFA"
