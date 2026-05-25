@@ -71,8 +71,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ win, macos, linux, android ]
-        arch: [ aarch64, x86_64 ]
+        os: [win, macos, linux, android]
+        arch: [aarch64, x86_64]
       fail-fast: false
 
     steps:
@@ -97,7 +97,8 @@ jobs:
         uses: robinraju/release-downloader@v1
         with:
           repository: SweetSmellFox/MFAAvalonia
-          fileName: "MFAAvalonia-*-${{ (matrix.os == 'win' && 'win') || (matrix.os ==
+          fileName: |
+            "MFAAvalonia-*-${{ (matrix.os == 'win' && 'win') || (matrix.os ==
             'macos' && 'osx') || (matrix.os == 'linux' && 'linux') }}-${{
             (matrix.arch == 'x86_64' && 'x64') || (matrix.arch == 'aarch64' &&
             'arm64') }}*"
@@ -126,6 +127,7 @@ jobs:
           rsync -av --ignore-existing MFA/ install/
 
       - name: Install (MFAA)
+        if: matrix.os != 'android'
         shell: bash
         run: |
           cd tools/
@@ -133,6 +135,7 @@ jobs:
           python ./install.py --version "${{ needs.meta.outputs.tag }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}" --gui mfaa
 
       - name: Prepare artifact for MFAA
+        if: matrix.os != 'android'
         id: mfaa_artifact
         shell: bash
         run: |
@@ -145,6 +148,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v7
+        if: matrix.os != 'android'
         with:
           name: NTEToolbox-MFAA-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ steps.mfaa_artifact.outputs.artifact_path }}
@@ -217,6 +221,29 @@ jobs:
           name: NTEToolbox-MXU-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ steps.mxu_artifact.outputs.artifact_path }}
 
+      # --------------------- Android (base) ---------------------
+      - name: Clean install directory for Android
+        if: matrix.os == 'android'
+        shell: bash
+        run: |
+          rm -rf install
+          mkdir install
+
+      - name: Install (Android)
+        if: matrix.os == 'android'
+        shell: bash
+        run: |
+          cd tools/
+          python -m pip install -r ./requirements.txt
+          python ./install.py --version "${{ needs.meta.outputs.tag }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}"
+
+      - name: Upload Android artifact
+        if: matrix.os == 'android'
+        uses: actions/upload-artifact@v7
+        with:
+          name: NTEToolbox-android-${{ matrix.arch }}
+          path: install
+
   changelog:
     name: Generate changelog
     needs: meta
@@ -242,7 +269,7 @@ jobs:
 
   release:
     if: ${{ needs.meta.outputs.is_release == 'true' }}
-    needs: [ meta, install, changelog ]
+    needs: [meta, install, changelog]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
