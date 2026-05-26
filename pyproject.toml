@@ -17,7 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "maafw>=5.10.4",
-    "music21>=9.9.1",
+    "music21>=10.1.0",
 ]
 dynamic = ["version"]
 license = "AGPL-3.0-or-later"

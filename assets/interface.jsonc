@@ -4,7 +4,7 @@
    "description": "异环工具箱",
    "license": "AGPLv3",
    "github": "https://github.com/op200/NTEToolbox",
-   "version": "1.7.0",
+   "version": "1.8.0",
    "resource": [
       {
          "name": "默认",
@@ -269,7 +269,7 @@
       "实时辅助_自动拾取": {
          "type": "switch",
          "label": "自动拾取",
-         "description": "自动按 F 键拾取",
+         "description": "自动按 F 键拾取。自动判断画面内容决定是否拾取",
          "cases": [
             {
                "name": "Yes",
@@ -297,7 +297,7 @@
       "实时辅助_自动拾取_永远拾取": {
          "type": "switch",
          "label": "自动拾取 - 永远拾取",
-         "description": "永远拾取，不判断屏幕内容。按住 F 时关闭 `自动拾取`。适合粉爪等场景（注意避开盔甲等）。仅在启用 `自动拾取` 时有效",
+         "description": "永远拾取，**不判断**画面内容。**按住 F** 时关闭 `自动拾取`。适合粉爪等场景（注意避开盔甲等）。仅在启用 `自动拾取` 时有效",
          "cases": [
             {
                "name": "Yes",

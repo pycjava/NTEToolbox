@@ -99,3 +99,25 @@
   如果觉得 debug 文件夹体积太大、写入频繁，浪费硬盘，可在 `config/maa_option.json` 中将 `logging` 设为 `false` 以关闭日志（使用 `全局设置` 功能可以让程序修改这个选项）
 
   提交 issue 仍需要提交日志，所以遇到 bug 时需要打开日志，最好将 `draw_quality` 设为 `100` 以提交更清晰的报错自动截图
+
+## 开发
+
+以下内容为开发者准备，普通用户不需要操作
+
+### 拉取
+
+拉取本仓库和子模块:  
+`git clone --recursive https://github.com/op200/NTEToolbox.git`
+
+更新子模块（若有需要）:  
+`git submodule update --init --recursive`
+
+*子模块为 `MaaCommonAssets`，内含 OCR 模型文件*
+
+### 依赖
+
+安装 Python 依赖:  
+使用任意包管理器安装 `pyproject.toml` 中的依赖
+
+复制 OCR 依赖:  
+执行 `tools/configure.py` 文件

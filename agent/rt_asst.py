@@ -87,6 +87,8 @@ assert all(
     for si in STR_IN
 )
 
+OCR_ROI: Final = [770, 228, 200, 336]
+
 
 @lru_cache(maxsize=256)
 def is_自动拾取_need_str(text: str, /) -> bool:
@@ -153,7 +155,7 @@ def reco_自动拾取(
             reco_自动拾取.__name__ + "_all_text": {
                 "recognition": {
                     "type": "OCR",
-                    "param": {"roi": [766, 204, 220, 394]},
+                    "param": {"roi": OCR_ROI},
                 },
             }
         },
@@ -188,7 +190,7 @@ def reco_自动拾取(
                 "recognition": {
                     "type": "ColorMatch",
                     "param": {
-                        "roi": [766, 204, 110, 394],
+                        "roi": OCR_ROI,
                         "lower": [192, 68, 118],
                         "upper": [208, 74, 124],
                     },

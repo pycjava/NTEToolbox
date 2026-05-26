@@ -142,7 +142,7 @@ def check_release() -> None:
 
 
 @AgentServer.custom_recognition("启动测试")
-class Adswq(CustomRecognition):
+class 启动测试(CustomRecognition):
     @override
     def analyze(
         self,
