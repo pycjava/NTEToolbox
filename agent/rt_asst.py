@@ -1,11 +1,12 @@
 import enum
+import itertools
 import time
 import traceback
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING, Final, Literal, override
+from typing import TYPE_CHECKING, Final, Literal, LiteralString, override
 
 from maa.agent.agent_server import AgentServer
 from maa.custom_action import CustomAction
@@ -23,15 +24,20 @@ if TYPE_CHECKING:
     from .maafw_tools import Img
 
 
-STR_EQ: Final = {
+STR_EQ: Final[set[LiteralString]] = {
     "打开",
     "开门",
+    "拿走",
+    "打包",
+    "采摘",
+    "采集",
+    "揪",
 }
-STR_NOT_EQ: Final = {
+STR_NOT_EQ: Final[set[LiteralString]] = {
     "坐下",
     "驾驶",
 }
-STR_IN: Final = (
+STR_IN: Final[tuple[LiteralString, ...]] = (
     "卡",
     "永恒之心",
     "宝石",
@@ -65,6 +71,7 @@ STR_IN: Final = (
     "银行文件",
     "漫画",
     # 大世界
+    "猎人攻略",
     "劲爽",
     "包裹",  # 避役的包裹
     "遗失",  # 钱包、储物柜钥匙
@@ -74,10 +81,11 @@ STR_IN: Final = (
     "一箱",  # 一箱xx
     "再来一口",
 )
-STR_NOT_IN: Final = (
+STR_NOT_IN: Final[tuple[LiteralString, ...]] = (
     "激活",
     "使用",
 )
+assert all(map(bool, itertools.chain(STR_EQ, STR_NOT_EQ, STR_IN, STR_NOT_IN)))
 assert all(
     (seq not in STR_NOT_EQ) and all((sni not in seq) for sni in STR_NOT_IN)
     for seq in STR_EQ

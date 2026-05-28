@@ -485,6 +485,7 @@ class Fish(CustomAction):
         log.debug(f"{option=}")
 
         def post_click_key(key: Win_virtual_key) -> None:
+            log.debug(f"{post_click_key.__name__}: {key}")
             controller.post_click_key(key.value.code).wait()
 
         fail_num: int = 0
@@ -509,6 +510,7 @@ class Fish(CustomAction):
 
                 if reco_获鱼(context, img):
                     post_click_key(Win_virtual_key.VK_ESCAPE)
+                    time.sleep(0.6)  # 等待获鱼界面消失，防止连续按 ESC
                     continue
 
                 if _res := reco_满舱_or_无饵(context, img):
