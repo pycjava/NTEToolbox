@@ -76,6 +76,12 @@ class Key:
 MIDI_SUFFIX_SET: Final[set[LiteralString]] = {".mid", ".midi"}
 
 
+def get_midi_range(all_midi: list[int], /) -> tuple[int, int, list[int], list[int]]:
+    midi_min_list = [midi for midi in all_midi if midi <= LOW_PITCH_OVERFLOW_LINE]
+    midi_max_list = [midi for midi in all_midi if midi >= HIGH_PITCH_OVERFLOW_LINE]
+    return min(all_midi), max(all_midi), midi_min_list, midi_max_list
+
+
 @AgentServer.custom_action("piano_play")
 class Piano_play(CustomAction):
     @override
@@ -277,12 +283,10 @@ class Piano_play(CustomAction):
 
         # 7. 音高范围检查
         all_midi = [ne.midi for ne in notes_events]
-        midi_min_list, midi_max_list = (
-            [midi for midi in all_midi if midi <= LOW_PITCH_OVERFLOW_LINE],
-            [midi for midi in all_midi if midi >= HIGH_PITCH_OVERFLOW_LINE],
+        midi_min, midi_max, midi_min_list, midi_max_list = get_midi_range(all_midi)
+        log.info(
+            f"MIDI 范围: {midi_min} - {midi_max}, 跨度: {midi_max - midi_min}"
         )
-        midi_min, midi_max = min(midi_min_list), max(midi_max_list)
-        log.info(f"MIDI 范围: {midi_min} - {midi_max}, 跨度: {midi_max - midi_min}")
         _max_len = len(str(max(len(midi_min_list), len(midi_max_list))))
         if midi_min <= LOW_PITCH_OVERFLOW_LINE:
             log.warning(f"警告: 低音溢出 {len(midi_min_list):<{_max_len}} 个音符")
