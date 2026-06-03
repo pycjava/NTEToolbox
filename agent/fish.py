@@ -38,6 +38,73 @@ class Fish_option:
     买饵次数: int
 
 
+def _normalize_stop_time(终止时间: datetime.datetime, /) -> datetime.datetime:
+    if 终止时间.tzinfo is None:
+        终止时间 = 终止时间.astimezone()
+    now = datetime.datetime.now().astimezone()
+    while 终止时间 < now:
+        终止时间 += datetime.timedelta(days=1)
+    return 终止时间
+
+
+def _parse_stop_time_text(终止时间: str, /) -> datetime.datetime:
+    try:
+        终止时间_obj = datetime.datetime.fromisoformat(终止时间)
+    except ValueError:
+        终止时间_obj = datetime.datetime.combine(
+            datetime.date.today(), datetime.time.fromisoformat(终止时间)
+        )
+    return _normalize_stop_time(终止时间_obj)
+
+
+def _get_stop_time_part(attach: dict, name: str, /) -> int:
+    value = attach.get(name)
+    if value is None:
+        raise ValueError(f"{name} 必须填值")
+    if isinstance(value, bool):
+        raise TypeError(f"{name} 类型不是 int")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as e:
+        raise TypeError(f"{name} 类型不是 int") from e
+
+
+def _parse_stop_time_parts(attach: dict, /) -> datetime.datetime:
+    try:
+        终止时间 = datetime.datetime(
+            _get_stop_time_part(attach, "终止年"),
+            _get_stop_time_part(attach, "终止月"),
+            _get_stop_time_part(attach, "终止日"),
+            _get_stop_time_part(attach, "终止时"),
+            _get_stop_time_part(attach, "终止分"),
+            _get_stop_time_part(attach, "终止秒"),
+        )
+    except ValueError as e:
+        raise ValueError("终止时间 年月日时分秒 不合法") from e
+    return _normalize_stop_time(终止时间)
+
+
+def parse_stop_time(attach: dict, /) -> datetime.datetime | None:
+    终止时间开关 = attach.get("终止时间开关")
+    if 终止时间开关 is not None:
+        if not isinstance(终止时间开关, bool):
+            raise TypeError("终止时间开关 类型不是 bool")
+        if not 终止时间开关:
+            return None
+        return _parse_stop_time_parts(attach)
+
+    # 兼容旧配置和手动 pipeline attach。
+    终止时间 = attach.get("终止时间")
+    if not 终止时间:
+        return None
+    if not isinstance(终止时间, str):
+        raise TypeError("终止时间 类型不是 str")
+    try:
+        return _parse_stop_time_text(终止时间)
+    except Exception as e:
+        raise ValueError("格式化日期时间字符串错误") from e
+
+
 def get_option(context: Context, argv: CustomAction.RunArg, /) -> Fish_option:
     node_obj = context.get_node_object(argv.node_name)
     if node_obj is None:
@@ -48,25 +115,8 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Fish_option:
 
     try:
         # 通用
-        终止时间 = attach.get("终止时间")
-        if not 终止时间:
-            终止时间 = None
-        else:
-            if not isinstance(终止时间, str):
-                raise TypeError("终止时间 类型不是 str")
-            try:
-                try:
-                    终止时间 = datetime.datetime.fromisoformat(终止时间)
-                except ValueError:
-                    终止时间 = datetime.datetime.combine(
-                        datetime.date.today(), datetime.time.fromisoformat(终止时间)
-                    )
-                if 终止时间.tzinfo is None:
-                    终止时间 = 终止时间.astimezone()
-                if 终止时间 < datetime.datetime.now().astimezone():
-                    终止时间 += datetime.timedelta(days=1)
-            except Exception as e:
-                raise ValueError("格式化日期时间字符串错误") from e
+        终止时间 = parse_stop_time(attach)
+        if 终止时间 is not None:
             log.info(f"终止时间: {终止时间}")
 
         # 溜鱼

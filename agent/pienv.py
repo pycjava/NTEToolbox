@@ -1,5 +1,7 @@
 """Forked from https://github.com/MAA1999/M9A/blob/1a1dfe8acee4255cf7132786e9964646c7071cad/agent/utils/pienv.py"""
 
+from __future__ import annotations
+
 import json
 import logging
 import os
