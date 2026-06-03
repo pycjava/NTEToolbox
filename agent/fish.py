@@ -57,9 +57,11 @@ def _parse_stop_time_text(终止时间: str, /) -> datetime.datetime:
     return _normalize_stop_time(终止时间_obj)
 
 
-def _get_stop_time_part(attach: dict, name: str, /) -> int:
+def _get_stop_time_part(attach: dict, name: str, /, default: int | None = None) -> int:
     value = attach.get(name)
     if value is None:
+        if default is not None:
+            return default
         raise ValueError(f"{name} 必须填值")
     if isinstance(value, bool):
         raise TypeError(f"{name} 类型不是 int")
@@ -77,10 +79,10 @@ def _parse_stop_time_parts(attach: dict, /) -> datetime.datetime:
             _get_stop_time_part(attach, "终止日"),
             _get_stop_time_part(attach, "终止时"),
             _get_stop_time_part(attach, "终止分"),
-            _get_stop_time_part(attach, "终止秒"),
+            _get_stop_time_part(attach, "终止秒", 0),
         )
     except ValueError as e:
-        raise ValueError("终止时间 年月日时分秒 不合法") from e
+        raise ValueError("终止时间 年月日时分 不合法") from e
     return _normalize_stop_time(终止时间)
 
 

@@ -122,7 +122,6 @@ class FishStopTimeTest(unittest.TestCase):
                             "终止日": 2,
                             "终止时": 23,
                             "终止分": 30,
-                            "终止秒": 5,
                             "溜鱼_midpoint_pix_range": 5,
                             "溜鱼_midpoint_sleep_time": 5,
                             "卖鱼买换饵开关": False,
@@ -137,7 +136,7 @@ class FishStopTimeTest(unittest.TestCase):
             self.assertEqual(option.终止时间.day, 2)
             self.assertEqual(option.终止时间.hour, 23)
             self.assertEqual(option.终止时间.minute, 30)
-            self.assertEqual(option.终止时间.second, 5)
+            self.assertEqual(option.终止时间.second, 0)
 
     def test_get_option_leaves_stop_time_disabled_by_default(self):
         with stub_maa_modules():
