@@ -1,0 +1,16 @@
+[package]
+name = "ntetoolbox-client"
+version = "0.0.0"
+description = "NTEToolbox Tauri client prototype"
+authors = ["op200"]
+edition = "2021"
+
+[lib]
+name = "ntetoolbox_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
