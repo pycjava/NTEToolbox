@@ -69,6 +69,32 @@ class AgentPackagingTest(unittest.TestCase):
         self.assertIn('/DGUI_EXE=$guiExe', script)
         self.assertIn("makensis", script)
 
+    def test_install_build_script_recreates_install_directory(self):
+        script = (ROOT / "tools" / "build_install.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[ValidateSet('mfaa', 'mxu')]", script)
+        self.assertIn("function Invoke-Step", script)
+        self.assertIn("function Clear-IntermediateArtifacts", script)
+        self.assertIn("$LASTEXITCODE", script)
+        self.assertIn('Join-Path $repoRoot "build\\pyinstaller"', script)
+        self.assertIn('Join-Path $repoRoot "dist\\agent.exe"', script)
+        self.assertIn('Get-ChildItem -LiteralPath $repoRoot -Filter "*.egg-info"', script)
+        self.assertIn("finally", script)
+        self.assertIn("Remove-Item -Recurse -Force", script)
+        self.assertIn("Copy-Item -Recurse -Force", script)
+        self.assertIn(
+            'Invoke-Step "python" @("-m", "pip", "install", "-e", ".", "pyinstaller")',
+            script,
+        )
+        self.assertIn('Invoke-Step "python" @(".\\tools\\build_agent.py")', script)
+        self.assertIn(
+            'Invoke-Step "python" @("-m", "pip", "install", "-r", ".\\tools\\requirements.txt")',
+            script,
+        )
+        self.assertIn('Invoke-Step "python" @(".\\tools\\install.py"', script)
+        self.assertIn('"--os", "win", "--arch", "x86_64"', script)
+        self.assertIn('"--gui", $Gui', script)
+
     def test_build_agent_uses_packaged_entry_and_agent_name(self):
         build_agent = load_tool_module("build_agent", ROOT / "tools" / "build_agent.py")
 
