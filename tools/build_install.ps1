@@ -21,6 +21,48 @@ function Invoke-Step {
     }
 }
 
+function Resolve-RepoRelativePath {
+    param(
+        [string] $Path
+    )
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
+}
+
+function Get-TrimmedPath {
+    param(
+        [string] $Path
+    )
+
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]] @('\', '/'))
+}
+
+function Assert-SafeInstallDir {
+    param(
+        [string] $Path
+    )
+
+    $installPath = Get-TrimmedPath $Path
+    $repoPath = Get-TrimmedPath $repoRoot
+    $driveRoot = ([System.IO.Path]::GetPathRoot($installPath)).TrimEnd([char[]] @('\', '/'))
+
+    if ($installPath -eq $driveRoot) {
+        throw "Refusing to delete drive root as install directory: $Path"
+    }
+    if ($installPath -eq $repoPath) {
+        throw "Refusing to delete repository root as install directory: $Path"
+    }
+    if ($GuiSourceDir -ne "") {
+        $guiPath = Get-TrimmedPath $GuiSourceDir
+        if ($installPath -eq $guiPath) {
+            throw "Refusing to use GUI source directory as install directory: $Path"
+        }
+    }
+}
+
 function Clear-IntermediateArtifacts {
     $pyinstallerBuildDir = Join-Path $repoRoot "build\pyinstaller"
     if (Test-Path -LiteralPath $pyinstallerBuildDir) {
@@ -36,10 +78,11 @@ function Clear-IntermediateArtifacts {
         Remove-Item -Recurse -Force
 }
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ($InstallDir -eq "") {
     $InstallDir = Join-Path $repoRoot "install"
 }
+$InstallDir = Resolve-RepoRelativePath $InstallDir
 if ($GuiSourceDir -eq "") {
     $GuiSourceDir = switch ($Gui) {
         "mfaa" { Join-Path $repoRoot "MFA" }
@@ -59,6 +102,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "deps\bin") -PathType Cont
 if (-not (Test-Path -LiteralPath $GuiSourceDir -PathType Container)) {
     throw "GUI source directory does not exist: $GuiSourceDir"
 }
+$GuiSourceDir = (Resolve-Path -LiteralPath $GuiSourceDir).Path
 
 $sourceGuiExe = Join-Path $GuiSourceDir $guiExe
 if (-not (Test-Path -LiteralPath $sourceGuiExe -PathType Leaf)) {
@@ -68,6 +112,7 @@ if (-not (Test-Path -LiteralPath $sourceGuiExe -PathType Leaf)) {
 Set-Location $repoRoot
 
 Clear-IntermediateArtifacts
+Assert-SafeInstallDir -Path $InstallDir
 
 try {
     if (Test-Path -LiteralPath $InstallDir) {
@@ -81,7 +126,7 @@ try {
     Invoke-Step "python" @(".\tools\build_agent.py")
 
     Invoke-Step "python" @("-m", "pip", "install", "-r", ".\tools\requirements.txt")
-    Invoke-Step "python" @(".\tools\install.py", "--version", $Version, "--os", "win", "--arch", "x86_64", "--gui", $Gui)
+    Invoke-Step "python" @(".\tools\install.py", "--version", $Version, "--os", "win", "--arch", "x86_64", "--gui", $Gui, "--install-dir", $InstallDir)
 
     $installGuiExe = Join-Path $InstallDir $guiExe
     if (-not (Test-Path -LiteralPath $installGuiExe -PathType Leaf)) {

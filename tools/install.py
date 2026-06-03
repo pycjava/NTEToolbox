@@ -37,6 +37,12 @@ def parse_args() -> argparse.Namespace:
         choices=["mfaa", "mxu"],
         help="GUI type (mfaa or mxu), required for non-Android platforms",
     )
+    parser.add_argument(
+        "--install-dir",
+        required=False,
+        default=None,
+        help="Output install directory. Defaults to ./install under the repository root.",
+    )
     return parser.parse_args()
 
 
@@ -126,8 +132,8 @@ def install_deps() -> None:
             raise ValueError(f"不允许的值: --gui {gui}")
 
 
-def resolve_agent_config(_root: Path, target_os: str) -> dict[str, object]:
-    if target_os == "win":
+def resolve_agent_config(root: Path, target_os: str) -> dict[str, object]:
+    if target_os == "win" and (root / "dist" / "agent.exe").is_file():
         return {
             "child_exec": "./agent.exe",
             "child_args": [],
@@ -207,6 +213,8 @@ if __name__ == "__main__":
     os_name: str = args.os
     arch: str = args.arch
     gui: str | None = args.gui
+    if args.install_dir is not None:
+        install_path = Path(args.install_dir).resolve()
 
     install_deps()
     install_resource()

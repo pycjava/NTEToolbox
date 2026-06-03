@@ -100,8 +100,21 @@ class DummyRunArg:
     node_name = "钓鱼"
 
 
+def _base_attach(**overrides):
+    attach = {
+        "终止时间开关": True,
+        "终止时长": 120,
+        "溜鱼_midpoint_pix_range": 5,
+        "溜鱼_midpoint_sleep_time": 5,
+        "卖鱼买换饵开关": False,
+        "买饵次数": 4,
+    }
+    attach.update(overrides)
+    return attach
+
+
 class FishStopTimeTest(unittest.TestCase):
-    def test_get_option_builds_stop_time_from_dropdown_parts(self):
+    def test_get_option_builds_stop_time_from_duration(self):
         with stub_maa_modules():
             fish = importlib.import_module("agent.fish")
             real_datetime = datetime.datetime
@@ -109,89 +122,54 @@ class FishStopTimeTest(unittest.TestCase):
 
             with patch.object(fish.datetime, "datetime") as datetime_cls:
                 datetime_cls.side_effect = real_datetime
-                datetime_cls.fromisoformat = real_datetime.fromisoformat
-                datetime_cls.combine = real_datetime.combine
                 datetime_cls.now.return_value = now
 
                 option = fish.get_option(
-                    DummyContext(
-                        {
-                            "终止时间开关": True,
-                            "终止年": 2026,
-                            "终止月": 6,
-                            "终止日": 2,
-                            "终止时": 23,
-                            "终止分": 30,
-                            "溜鱼_midpoint_pix_range": 5,
-                            "溜鱼_midpoint_sleep_time": 5,
-                            "卖鱼买换饵开关": False,
-                            "买饵次数": 4,
-                        }
-                    ),
+                    DummyContext(_base_attach(终止时长=120)),
                     DummyRunArg(),
                 )
 
-            self.assertEqual(option.终止时间.year, 2026)
-            self.assertEqual(option.终止时间.month, 6)
-            self.assertEqual(option.终止时间.day, 2)
-            self.assertEqual(option.终止时间.hour, 23)
-            self.assertEqual(option.终止时间.minute, 30)
-            self.assertEqual(option.终止时间.second, 0)
+            expected = now + datetime.timedelta(minutes=120)
+            self.assertEqual(option.终止时间, expected)
 
     def test_get_option_leaves_stop_time_disabled_by_default(self):
         with stub_maa_modules():
             fish = importlib.import_module("agent.fish")
 
             option = fish.get_option(
-                DummyContext(
-                    {
-                        "终止时间开关": False,
-                        "溜鱼_midpoint_pix_range": 5,
-                        "溜鱼_midpoint_sleep_time": 5,
-                        "卖鱼买换饵开关": False,
-                        "买饵次数": 4,
-                    }
-                ),
+                DummyContext(_base_attach(终止时间开关=False)),
                 DummyRunArg(),
             )
 
             self.assertIsNone(option.终止时间)
 
-    def test_get_option_moves_past_dropdown_date_to_next_future_day(self):
+    def test_parse_stop_time_raises_on_missing_终止时长(self):
         with stub_maa_modules():
             fish = importlib.import_module("agent.fish")
-            real_datetime = datetime.datetime
-            now = real_datetime(2026, 6, 5, 12, 0, 0).astimezone()
+            attach = _base_attach()
+            del attach["终止时长"]
+            with self.assertRaises(ValueError) as ctx:
+                fish.parse_stop_time(attach)
+            self.assertIn("终止时长", str(ctx.exception))
 
-            with patch.object(fish.datetime, "datetime") as datetime_cls:
-                datetime_cls.side_effect = real_datetime
-                datetime_cls.fromisoformat = real_datetime.fromisoformat
-                datetime_cls.combine = real_datetime.combine
-                datetime_cls.now.return_value = now
+    def test_parse_stop_time_raises_on_zero_终止时长(self):
+        with stub_maa_modules():
+            fish = importlib.import_module("agent.fish")
+            with self.assertRaises(ValueError) as ctx:
+                fish.parse_stop_time(_base_attach(终止时长=0))
+            self.assertIn("终止时长", str(ctx.exception))
 
-                option = fish.get_option(
-                    DummyContext(
-                        {
-                            "终止时间开关": True,
-                            "终止年": 2026,
-                            "终止月": 6,
-                            "终止日": 2,
-                            "终止时": 23,
-                            "终止分": 30,
-                            "终止秒": 5,
-                            "溜鱼_midpoint_pix_range": 5,
-                            "溜鱼_midpoint_sleep_time": 5,
-                            "卖鱼买换饵开关": False,
-                            "买饵次数": 4,
-                        }
-                    ),
-                    DummyRunArg(),
-                )
+    def test_parse_stop_time_raises_on_non_int_终止时长(self):
+        with stub_maa_modules():
+            fish = importlib.import_module("agent.fish")
+            with self.assertRaises(TypeError):
+                fish.parse_stop_time(_base_attach(终止时长="abc"))
 
-            self.assertEqual(option.终止时间.year, 2026)
-            self.assertEqual(option.终止时间.month, 6)
-            self.assertEqual(option.终止时间.day, 5)
-            self.assertEqual(option.终止时间.hour, 23)
+    def test_parse_stop_time_raises_on_bool_终止时长(self):
+        with stub_maa_modules():
+            fish = importlib.import_module("agent.fish")
+            with self.assertRaises(TypeError):
+                fish.parse_stop_time(_base_attach(终止时长=True))
 
 
 if __name__ == "__main__":

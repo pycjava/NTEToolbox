@@ -6,6 +6,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -74,6 +75,7 @@ class AgentPackagingTest(unittest.TestCase):
 
         self.assertIn("[ValidateSet('mfaa', 'mxu')]", script)
         self.assertIn("function Invoke-Step", script)
+        self.assertIn("function Assert-SafeInstallDir", script)
         self.assertIn("function Clear-IntermediateArtifacts", script)
         self.assertIn("$LASTEXITCODE", script)
         self.assertIn('Join-Path $repoRoot "build\\pyinstaller"', script)
@@ -94,6 +96,33 @@ class AgentPackagingTest(unittest.TestCase):
         self.assertIn('Invoke-Step "python" @(".\\tools\\install.py"', script)
         self.assertIn('"--os", "win", "--arch", "x86_64"', script)
         self.assertIn('"--gui", $Gui', script)
+        self.assertIn('"--install-dir", $InstallDir', script)
+        self.assertIn("Assert-SafeInstallDir -Path $InstallDir", script)
+
+    def test_install_script_accepts_install_dir_override(self):
+        install = load_tool_module("install", ROOT / "tools" / "install.py")
+        install_dir = ROOT / "custom-install"
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "install.py",
+                "--version",
+                "v1.9.0",
+                "--os",
+                "win",
+                "--arch",
+                "x86_64",
+                "--gui",
+                "mfaa",
+                "--install-dir",
+                str(install_dir),
+            ],
+        ):
+            args = install.parse_args()
+
+        self.assertEqual(args.install_dir, str(install_dir))
 
     def test_build_agent_uses_packaged_entry_and_agent_name(self):
         build_agent = load_tool_module("build_agent", ROOT / "tools" / "build_agent.py")
@@ -144,7 +173,7 @@ class AgentPackagingTest(unittest.TestCase):
             self.assertTrue((root / "install" / "agent" / "__main__.py").is_file())
             self.assertFalse((root / "install" / "agent.exe").exists())
 
-    def test_resolve_agent_config_uses_exe_for_windows_even_before_copy(self):
+    def test_resolve_agent_config_uses_exe_only_when_windows_exe_exists(self):
         install = load_tool_module("install", ROOT / "tools" / "install.py")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,7 +181,7 @@ class AgentPackagingTest(unittest.TestCase):
 
             self.assertEqual(
                 install.resolve_agent_config(root, "win"),
-                {"child_exec": "./agent.exe", "child_args": []},
+                {"child_exec": "python", "child_args": ["-u", "-m", "agent"]},
             )
             self.assertEqual(
                 install.resolve_agent_config(root, "linux"),
@@ -175,17 +204,19 @@ class AgentPackagingTest(unittest.TestCase):
 
         self.assertIn("build-agent-windows:", workflow)
         self.assertIn("python tools/build_agent.py", workflow)
-        self.assertIn("NTEToolbox-agent-win-x86_64", workflow)
+        self.assertIn("internal-agent-win-x86_64", workflow)
+        self.assertNotIn("NTEToolbox-agent-win-x86_64", workflow)
+        self.assertIn("pattern: NTEToolbox-*", workflow)
 
-    def test_interface_starts_packaged_agent_exe(self):
+    def test_source_interface_uses_python_agent_for_development(self):
         interface = json.loads(
             strip_jsonc_comments(
                 (ROOT / "assets" / "interface.jsonc").read_text(encoding="utf-8")
             )
         )
 
-        self.assertEqual(interface["agent"]["child_exec"], "./agent.exe")
-        self.assertEqual(interface["agent"].get("child_args", []), [])
+        self.assertEqual(interface["agent"]["child_exec"], "python")
+        self.assertEqual(interface["agent"].get("child_args", []), ["-u", "-m", "agent"])
 
     def test_package_metadata_reads_version_from_lightweight_module(self):
         pyproject = tomllib.loads(

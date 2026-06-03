@@ -27,31 +27,18 @@ class FishInterfaceStopTimeTest(unittest.TestCase):
 
         options = interface["option"]
         self.assertEqual(options["钓鱼终止时间开关"]["type"], "switch")
-        for option_name in (
-            "钓鱼终止年",
-            "钓鱼终止月",
-            "钓鱼终止日",
-            "钓鱼终止时",
-            "钓鱼终止分",
-        ):
-            self.assertEqual(options[option_name]["type"], "select")
+        self.assertEqual(options["钓鱼终止时长"]["type"], "select")
 
         yes_case = next(
             case
             for case in options["钓鱼终止时间开关"]["cases"]
             if case["name"] == "Yes"
         )
-        self.assertEqual(
-            yes_case["option"],
-            [
-                "钓鱼终止年",
-                "钓鱼终止月",
-                "钓鱼终止日",
-                "钓鱼终止时",
-                "钓鱼终止分",
-            ],
-        )
-        self.assertNotIn("钓鱼终止秒", options)
+        self.assertEqual(yes_case["option"], ["钓鱼终止时长"])
+
+        # Verify old dropdowns were removed
+        for old_name in ("钓鱼终止年", "钓鱼终止月", "钓鱼终止日", "钓鱼终止时", "钓鱼终止分", "钓鱼终止秒"):
+            self.assertNotIn(old_name, options)
         self.assertNotIn("钓鱼通用设置", options)
 
 
