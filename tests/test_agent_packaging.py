@@ -1,0 +1,199 @@
+import ast
+import importlib.util
+import json
+import sys
+import tempfile
+import tomllib
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def load_tool_module(name: str, path: Path):
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"failed to load {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(path.parent))
+
+
+def strip_jsonc_comments(text: str) -> str:
+    validate_schema = load_tool_module(
+        "validate_schema", ROOT / "tools" / "validate_schema.py"
+    )
+    return validate_schema.strip_jsonc_comments(text)
+
+
+class AgentPackagingTest(unittest.TestCase):
+    def test_nsis_script_packages_install_directory_recursively(self):
+        script = (ROOT / "installer" / "NTEToolbox.nsi").read_text(encoding="utf-8")
+
+        self.assertIn('!define INSTALL_SOURCE "..\\install"', script)
+        self.assertIn('SetOutPath "$INSTDIR"', script)
+        self.assertIn('File /r /x "debug" /x "logs" /x "temp" "${INSTALL_SOURCE}\\*.*"', script)
+
+    def test_nsis_script_installs_missing_dotnet_and_vc_runtime(self):
+        script = (ROOT / "installer" / "NTEToolbox.nsi").read_text(encoding="utf-8")
+
+        self.assertIn("Function EnsureDotNetRuntime", script)
+        self.assertIn("Function EnsureVCRedist", script)
+        self.assertIn('Microsoft.WindowsDesktop.App', script)
+        self.assertIn('VisualStudio\\14.0\\VC\\Runtimes', script)
+        self.assertIn('powershell.exe', script)
+        self.assertIn('Invoke-WebRequest', script)
+        self.assertIn('/passive /norestart', script)
+
+    def test_nsis_script_creates_desktop_shortcut_to_configured_gui(self):
+        script = (ROOT / "installer" / "NTEToolbox.nsi").read_text(encoding="utf-8")
+
+        self.assertIn('!define GUI_EXE "MFAAvalonia.exe"', script)
+        self.assertIn('IfFileExists "$INSTDIR\\${GUI_EXE}"', script)
+        self.assertIn(
+            'CreateShortcut "$DESKTOP\\NTEToolbox.lnk" "$INSTDIR\\${GUI_EXE}"',
+            script,
+        )
+
+    def test_nsis_build_script_can_select_mfaa_or_mxu_shortcut_target(self):
+        script = (ROOT / "tools" / "build_nsis.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[ValidateSet('mfaa', 'mxu')]", script)
+        self.assertIn('"mfaa" { "MFAAvalonia.exe" }', script)
+        self.assertIn('"mxu" { "mxu.exe" }', script)
+        self.assertIn('/DGUI_EXE=$guiExe', script)
+        self.assertIn("makensis", script)
+
+    def test_build_agent_uses_packaged_entry_and_agent_name(self):
+        build_agent = load_tool_module("build_agent", ROOT / "tools" / "build_agent.py")
+
+        args = build_agent.build_pyinstaller_args(ROOT)
+
+        self.assertIn("--onefile", args)
+        self.assertIn("--clean", args)
+        self.assertIn("--name=agent", args)
+        self.assertIn(f"--paths={ROOT}", args)
+        self.assertIn("--collect-all=MaaAgentBinary", args)
+        self.assertNotIn("--collect-all=maaagentbinary", args)
+        self.assertIn(str(ROOT / "tools" / "agent_entry.py"), args)
+
+    def test_install_agent_copies_windows_exe(self):
+        install = load_tool_module("install", ROOT / "tools" / "install.py")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            (dist / "agent.exe").write_bytes(b"agent exe")
+
+            install.working_dir = root
+            install.install_path = root / "install"
+            install.os_name = "win"
+
+            install.install_agent()
+
+            self.assertEqual((root / "install" / "agent.exe").read_bytes(), b"agent exe")
+            self.assertFalse((root / "install" / "agent").exists())
+
+    def test_install_agent_falls_back_to_source_when_windows_exe_is_missing(self):
+        install = load_tool_module("install", ROOT / "tools" / "install.py")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_agent = root / "agent"
+            source_agent.mkdir()
+            (source_agent / "__main__.py").write_text("print('agent')", encoding="utf-8")
+
+            install.working_dir = root
+            install.install_path = root / "install"
+            install.os_name = "win"
+
+            install.install_agent()
+
+            self.assertTrue((root / "install" / "agent" / "__main__.py").is_file())
+            self.assertFalse((root / "install" / "agent.exe").exists())
+
+    def test_resolve_agent_config_uses_exe_for_windows_even_before_copy(self):
+        install = load_tool_module("install", ROOT / "tools" / "install.py")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            self.assertEqual(
+                install.resolve_agent_config(root, "win"),
+                {"child_exec": "./agent.exe", "child_args": []},
+            )
+            self.assertEqual(
+                install.resolve_agent_config(root, "linux"),
+                {"child_exec": "python", "child_args": ["-u", "-m", "agent"]},
+            )
+
+            dist = root / "dist"
+            dist.mkdir()
+            (dist / "agent.exe").write_bytes(b"agent exe")
+
+            self.assertEqual(
+                install.resolve_agent_config(root, "win"),
+                {"child_exec": "./agent.exe", "child_args": []},
+            )
+
+    def test_workflow_builds_and_downloads_windows_agent_exe(self):
+        workflow = (ROOT / ".github" / "workflows" / "install.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("build-agent-windows:", workflow)
+        self.assertIn("python tools/build_agent.py", workflow)
+        self.assertIn("NTEToolbox-agent-win-x86_64", workflow)
+
+    def test_interface_starts_packaged_agent_exe(self):
+        interface = json.loads(
+            strip_jsonc_comments(
+                (ROOT / "assets" / "interface.jsonc").read_text(encoding="utf-8")
+            )
+        )
+
+        self.assertEqual(interface["agent"]["child_exec"], "./agent.exe")
+        self.assertEqual(interface["agent"].get("child_args", []), [])
+
+    def test_package_metadata_reads_version_from_lightweight_module(self):
+        pyproject = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            pyproject["tool"]["setuptools"]["dynamic"]["version"]["attr"],
+            "agent._version.__version__",
+        )
+
+        version_module = ast.parse(
+            (ROOT / "agent" / "_version.py").read_text(encoding="utf-8")
+        )
+        assignments = [
+            node
+            for node in version_module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "__version__"
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(len(assignments), 1)
+        self.assertIsInstance(assignments[0].value, ast.Constant)
+        self.assertIsInstance(assignments[0].value.value, str)
+
+        interface = json.loads(
+            strip_jsonc_comments(
+                (ROOT / "assets" / "interface.jsonc").read_text(encoding="utf-8")
+            )
+        )
+        self.assertEqual(assignments[0].value.value, interface["version"])
+
+
+if __name__ == "__main__":
+    unittest.main()

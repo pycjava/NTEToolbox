@@ -12,8 +12,8 @@
       }
    ],
    "agent": {
-      "child_exec": "python",
-      "child_args": ["-u", "-m", "agent"]
+      "child_exec": "./agent.exe",
+      "child_args": []
    },
    "controller": [
       {

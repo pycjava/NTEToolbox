@@ -126,6 +126,19 @@ def install_deps() -> None:
             raise ValueError(f"不允许的值: --gui {gui}")
 
 
+def resolve_agent_config(_root: Path, target_os: str) -> dict[str, object]:
+    if target_os == "win":
+        return {
+            "child_exec": "./agent.exe",
+            "child_args": [],
+        }
+
+    return {
+        "child_exec": "python",
+        "child_args": ["-u", "-m", "agent"],
+    }
+
+
 def install_resource() -> None:
     configure_ocr_model()
 
@@ -153,6 +166,7 @@ def install_resource() -> None:
         interface: dict = jsonc.loads(interface_path_new.read_text(encoding="utf-8"))
 
         interface["version"] = version
+        interface["agent"] = resolve_agent_config(working_dir, os_name)
 
         interface_path_new.write_text(
             jsonc.dumps(interface, ensure_ascii=False, indent=3), encoding="utf-8"
@@ -171,6 +185,15 @@ def install_chores() -> None:
 
 
 def install_agent() -> None:
+    install_path.mkdir(parents=True, exist_ok=True)
+
+    if os_name == "win" and (working_dir / "dist" / "agent.exe").is_file():
+        shutil.copy2(
+            working_dir / "dist" / "agent.exe",
+            install_path / "agent.exe",
+        )
+        return
+
     shutil.copytree(
         working_dir / "agent",
         install_path / "agent",

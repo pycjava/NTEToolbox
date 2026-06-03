@@ -33,7 +33,7 @@ Source   = "https://github.com/op200/NTEToolbox"
 packages = ["agent"]
 
 [tool.setuptools.dynamic]
-version = { attr = "agent.__version__" }
+version = { attr = "agent._version.__version__" }
 
 [tool.setuptools.package-data]
 ntetoolbox = ["assets/**/*"]

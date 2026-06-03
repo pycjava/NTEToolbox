@@ -1,5 +1,6 @@
 import sys
 
+from ._version import __version__ as _package_version
 from .global_val import Exit_code
 from .log import log
 
@@ -23,4 +24,4 @@ __all__ = [
     "utils",
 ]
 
-__version__ = utils.get_project_version() or "0.0.0"
+__version__ = utils.get_project_version() or _package_version
