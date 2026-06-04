@@ -62,6 +62,7 @@ export type GameDefinition = {
 export type ClientState = {
   selectedGameId: string;
   games: GameDefinition[];
+  settingsValues: Record<string, OptionValue>;
 };
 
 const fishingDefaultValues: Record<string, OptionValue> = {
@@ -73,10 +74,52 @@ const fishingDefaultValues: Record<string, OptionValue> = {
   "买饵次数": "4"
 };
 
-export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
-  if (feature.id !== "fish") return feature.configSummary;
+const pianoDefaultValues: Record<string, OptionValue> = {
+  midi_path: "",
+  bpm: "",
+  piano_mode: "36",
+  timeout_mode: "速率不变",
+  use_custom_winapi: "1"
+};
 
-  const values = { ...fishingDefaultValues, ...feature.optionValues };
+const assistDefaultValues: Record<string, OptionValue> = {
+  "实时辅助_自动拾取": true,
+  "实时辅助_自动拾取_永远拾取": false,
+  "实时辅助_S级鱼截图": true,
+  "S级鱼截图保存目录": "screenshots/s_fish",
+  "S级鱼截图冷却时间": "5"
+};
+
+const featureDefaultValuesById: Record<string, Record<string, OptionValue>> = {
+  fish: fishingDefaultValues,
+  piano: pianoDefaultValues,
+  assist: assistDefaultValues
+};
+
+const globalSettingsDefaultValues: Record<string, OptionValue> = {
+  debug_mode_switch: "0",
+  logging_switch: "1"
+};
+
+export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
+  const values = { ...(featureDefaultValuesById[feature.id] ?? {}), ...feature.optionValues };
+
+  if (feature.id === "fish") {
+    return buildFishingConfigSummary(values);
+  }
+
+  if (feature.id === "piano") {
+    return buildPianoConfigSummary(values);
+  }
+
+  if (feature.id === "assist") {
+    return buildAssistConfigSummary(values);
+  }
+
+  return feature.configSummary;
+}
+
+function buildFishingConfigSummary(values: Record<string, OptionValue>): string {
   const endTimeEnabled = values["钓鱼终止时间开关"] === true;
   const autoBaitEnabled = values["卖鱼买换饵开关"] === true;
   const duration = String(values["钓鱼终止时长"] ?? "2小时");
@@ -89,11 +132,36 @@ export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
   ].join(" · ");
 }
 
+function buildPianoConfigSummary(values: Record<string, OptionValue>): string {
+  const midiPath = String(values.midi_path ?? "").trim();
+  const midiName = midiPath ? (midiPath.split(/[\\/]/).filter(Boolean).pop() ?? midiPath) : "未选择";
+  const pianoMode = String(values.piano_mode ?? "36");
+  const winApiEnabled = values.use_custom_winapi === "1";
+
+  return [
+    `MIDI ${midiName}`,
+    `模式 ${pianoMode}键`,
+    `WinAPI ${winApiEnabled ? "开启" : "关闭"}`
+  ].join(" · ");
+}
+
+function buildAssistConfigSummary(values: Record<string, OptionValue>): string {
+  const autoPickupEnabled = values["实时辅助_自动拾取"] === true;
+  const alwaysPickupEnabled = autoPickupEnabled && values["实时辅助_自动拾取_永远拾取"] === true;
+  const screenshotEnabled = values["实时辅助_S级鱼截图"] === true;
+
+  return [
+    `自动拾取 ${autoPickupEnabled ? "开启" : "关闭"}`,
+    `永远拾取 ${alwaysPickupEnabled ? "开启" : "关闭"}`,
+    `S级鱼截图 ${screenshotEnabled ? "开启" : "关闭"}`
+  ].join(" · ");
+}
+
 function withDefaultRunState(feature: FeatureDefinition): FeatureDefinition {
-  const optionValues =
-    feature.id === "fish"
-      ? { ...fishingDefaultValues, ...feature.optionValues }
-      : feature.optionValues;
+  const defaultOptionValues = featureDefaultValuesById[feature.id];
+  const optionValues = defaultOptionValues
+    ? { ...defaultOptionValues, ...feature.optionValues }
+    : feature.optionValues;
   const normalizedFeature = {
     ...feature,
     optionValues,
@@ -118,7 +186,8 @@ export function buildInitialClientState(games: GameDefinition[]): ClientState {
 
   return {
     selectedGameId: clonedGames[0]?.id ?? "",
-    games: clonedGames
+    games: clonedGames,
+    settingsValues: { ...globalSettingsDefaultValues }
   };
 }
 
@@ -131,6 +200,19 @@ export function selectGame(state: ClientState, gameId: string): ClientState {
   };
 }
 
+export function setGlobalSettingsValues(
+  state: ClientState,
+  values: Record<string, OptionValue>
+): ClientState {
+  return {
+    ...state,
+    settingsValues: {
+      ...state.settingsValues,
+      ...values
+    }
+  };
+}
+
 export function addGame(state: ClientState, game: GameDefinition): ClientState {
   const normalizedGame: GameDefinition = {
     ...game,
@@ -138,6 +220,7 @@ export function addGame(state: ClientState, game: GameDefinition): ClientState {
   };
 
   return {
+    ...state,
     selectedGameId: normalizedGame.id,
     games: [...state.games.filter((current) => current.id !== normalizedGame.id), normalizedGame]
   };

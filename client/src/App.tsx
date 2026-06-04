@@ -17,7 +17,7 @@ import {
   Upload
 } from "lucide-react";
 
-import { initialGames, nteOptions } from "./clientData";
+import { globalSettingsOption, initialGames, nteOptions } from "./clientData";
 import {
   addGame,
   buildInitialClientState,
@@ -25,6 +25,7 @@ import {
   selectGame,
   setFeatureOptionValues,
   setFeatureRunState,
+  setGlobalSettingsValues,
   type ClientState,
   type FeatureDefinition,
   type GameDefinition,
@@ -98,6 +99,11 @@ function App() {
     setState((current) => setFeatureRunState(current, gameId, featureId, runState));
   }
 
+  function handleSaveSettings(values: Record<string, OptionValue>) {
+    setState((current) => setGlobalSettingsValues(current, values));
+    setIsSettingsOpen(false);
+  }
+
   function handleAddGame(game: GameDefinition) {
     setState((current) => addGame(current, game));
     setIsAddOpen(false);
@@ -164,7 +170,13 @@ function App() {
       ) : null}
 
       {isAddOpen ? <AddGameDialog onClose={() => setIsAddOpen(false)} onAdd={handleAddGame} /> : null}
-      {isSettingsOpen ? <SettingsDialog onClose={() => setIsSettingsOpen(false)} /> : null}
+      {isSettingsOpen ? (
+        <SettingsDialog
+          settingsValues={state.settingsValues}
+          onClose={() => setIsSettingsOpen(false)}
+          onSave={handleSaveSettings}
+        />
+      ) : null}
     </main>
   );
 }
@@ -287,7 +299,7 @@ type FeatureConfigDialogProps = {
 
 function FeatureConfigDialog({ target, onClose, onSave }: FeatureConfigDialogProps) {
   const [values, setValues] = useState<Record<string, OptionValue>>(() => ({ ...(target.feature.optionValues ?? {}) }));
-  const optionDefinitions = target.feature.id === "fish" ? nteOptions : {};
+  const optionDefinitions = target.feature.optionKeys?.length ? nteOptions : {};
   const visibleOptionKeys = getVisibleOptionKeys(target.feature.optionKeys ?? [], optionDefinitions, values);
 
   function updateValue(name: string, value: OptionValue) {
@@ -503,7 +515,24 @@ function AddGameDialog({ onClose, onAdd }: AddGameDialogProps) {
   );
 }
 
-function SettingsDialog({ onClose }: { onClose: () => void }) {
+function SettingsDialog({
+  settingsValues,
+  onClose,
+  onSave
+}: {
+  settingsValues: Record<string, OptionValue>;
+  onClose: () => void;
+  onSave: (values: Record<string, OptionValue>) => void;
+}) {
+  const [values, setValues] = useState<Record<string, OptionValue>>(() => ({ ...settingsValues }));
+
+  function updateValue(name: string, value: OptionValue) {
+    setValues((current) => ({
+      ...current,
+      [name]: value
+    }));
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -518,6 +547,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="settings-list">
+          <OptionField option={globalSettingsOption} values={values} onChange={updateValue} />
           <label className="field-group compact">
             <span>主题</span>
             <select defaultValue="light">
@@ -533,6 +563,15 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" defaultChecked />
             <span>需要管理员权限时提示</span>
           </label>
+        </div>
+
+        <div className="modal-actions">
+          <button className="secondary-action" type="button" onClick={onClose}>
+            取消
+          </button>
+          <button className="primary-action" type="button" onClick={() => onSave(values)}>
+            保存
+          </button>
         </div>
       </section>
     </div>

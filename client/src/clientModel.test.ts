@@ -8,6 +8,7 @@ import {
   setFeatureConfig,
   setFeatureOptionValue,
   setFeatureRunState,
+  setGlobalSettingsValues,
   type GameDefinition,
   type OptionDefinition
 } from "./clientModel";
@@ -70,6 +71,51 @@ const fishOptionDefinitions: Record<string, OptionDefinition> = {
   }
 };
 
+const assistOptionDefinitions: Record<string, OptionDefinition> = {
+  "实时辅助_自动拾取": {
+    key: "实时辅助_自动拾取",
+    type: "switch",
+    label: "自动拾取",
+    description: "自动按 F 键拾取。自动判断画面内容决定是否拾取",
+    defaultValue: true,
+    enabledOptionKeys: ["实时辅助_自动拾取_永远拾取"]
+  },
+  "实时辅助_自动拾取_永远拾取": {
+    key: "实时辅助_自动拾取_永远拾取",
+    type: "switch",
+    label: "自动拾取 - 永远拾取",
+    description: "永远拾取，不判断画面内容。仅在启用自动拾取时有效",
+    defaultValue: false
+  },
+  "实时辅助_S级鱼截图": {
+    key: "实时辅助_S级鱼截图",
+    type: "switch",
+    label: "S级鱼截图",
+    description: "识别到金色背景光和 S 图标时，自动保存当前截图",
+    defaultValue: true,
+    enabledOptionKeys: ["实时辅助_S级鱼截图_设置"]
+  },
+  "实时辅助_S级鱼截图_设置": {
+    key: "实时辅助_S级鱼截图_设置",
+    type: "input",
+    label: "S级鱼截图设置",
+    inputs: [
+      {
+        name: "S级鱼截图保存目录",
+        label: "S级鱼截图保存目录",
+        pipelineType: "string",
+        defaultValue: "screenshots/s_fish"
+      },
+      {
+        name: "S级鱼截图冷却时间",
+        label: "S级鱼截图冷却时间 (秒)",
+        pipelineType: "int",
+        defaultValue: "5"
+      }
+    ]
+  }
+};
+
 const games: GameDefinition[] = [
   {
     id: "nte",
@@ -88,7 +134,15 @@ const games: GameDefinition[] = [
         id: "piano",
         name: "弹钢琴",
         description: "MIDI 文件、键盘输入模式",
-        configSummary: "MIDI 未选择 · WinAPI 输入关闭"
+        configSummary: "",
+        optionKeys: ["弹钢琴_keybord_设置"]
+      },
+      {
+        id: "assist",
+        name: "实时辅助",
+        description: "自动拾取、S 级鱼截图",
+        configSummary: "",
+        optionKeys: ["实时辅助_自动拾取", "实时辅助_S级鱼截图"]
       }
     ]
   },
@@ -106,7 +160,21 @@ describe("client model", () => {
     const state = buildInitialClientState(games);
 
     expect(state.selectedGameId).toBe("nte");
-    expect(state.games[0].features).toHaveLength(2);
+    expect(state.games[0].features).toHaveLength(3);
+    expect(state.settingsValues).toMatchObject({
+      debug_mode_switch: "0",
+      logging_switch: "1"
+    });
+  });
+
+  it("saves global settings values in client state", () => {
+    const state = buildInitialClientState(games);
+    const next = setGlobalSettingsValues(state, { debug_mode_switch: "1" });
+
+    expect(next.settingsValues).toMatchObject({
+      debug_mode_switch: "1",
+      logging_switch: "1"
+    });
   });
 
   it("selects a game from the top icon switcher", () => {
@@ -132,7 +200,7 @@ describe("client model", () => {
   });
 
   it("adds a local game and selects it for the icon switcher", () => {
-    const state = buildInitialClientState(games);
+    const state = setGlobalSettingsValues(buildInitialClientState(games), { debug_mode_switch: "1" });
     const next = addGame(state, {
       id: "new-game",
       name: "新游戏",
@@ -143,6 +211,7 @@ describe("client model", () => {
 
     expect(next.games).toHaveLength(3);
     expect(next.selectedGameId).toBe("new-game");
+    expect(next.settingsValues.debug_mode_switch).toBe("1");
   });
 
   it("initializes fishing options with screenshot defaults", () => {
@@ -198,5 +267,58 @@ describe("client model", () => {
     const next = setFeatureOptionValue(state, "nte", "fish", "卖鱼买换饵开关", false);
 
     expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 关闭 · 买饵 4次");
+  });
+
+  it("initializes piano keyboard input options", () => {
+    const state = buildInitialClientState(games);
+    const piano = state.games[0].features[1];
+
+    expect(piano.optionValues).toMatchObject({
+      midi_path: "",
+      bpm: "",
+      piano_mode: "36",
+      timeout_mode: "速率不变",
+      use_custom_winapi: "1"
+    });
+    expect(piano.configSummary).toBe("MIDI 未选择 · 模式 36键 · WinAPI 开启");
+  });
+
+  it("updates piano summary when a MIDI path is selected", () => {
+    const state = buildInitialClientState(games);
+    const next = setFeatureOptionValue(state, "nte", "piano", "midi_path", "D:\\songs\\theme.mid");
+    const piano = next.games[0].features[1];
+
+    expect(piano.optionValues?.midi_path).toBe("D:\\songs\\theme.mid");
+    expect(piano.configSummary).toBe("MIDI theme.mid · 模式 36键 · WinAPI 开启");
+  });
+
+  it("initializes realtime assist options", () => {
+    const state = buildInitialClientState(games);
+    const assist = state.games[0].features[2];
+
+    expect(assist.optionValues).toMatchObject({
+      "实时辅助_自动拾取": true,
+      "实时辅助_自动拾取_永远拾取": false,
+      "实时辅助_S级鱼截图": true,
+      "S级鱼截图保存目录": "screenshots/s_fish",
+      "S级鱼截图冷却时间": "5"
+    });
+    expect(assist.configSummary).toBe("自动拾取 开启 · 永远拾取 关闭 · S级鱼截图 开启");
+  });
+
+  it("hides realtime assist dependent settings when their switches are disabled", () => {
+    const state = buildInitialClientState(games);
+    const withoutPickup = setFeatureOptionValue(state, "nte", "assist", "实时辅助_自动拾取", false);
+    const withoutScreenshot = setFeatureOptionValue(withoutPickup, "nte", "assist", "实时辅助_S级鱼截图", false);
+    const assist = withoutScreenshot.games[0].features[2];
+    const visibleOptionKeys = getVisibleOptionKeys(
+      assist.optionKeys ?? [],
+      assistOptionDefinitions,
+      assist.optionValues ?? {}
+    );
+
+    expect(visibleOptionKeys).not.toContain("实时辅助_自动拾取_永远拾取");
+    expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图_设置");
+    expect(assist.configSummary).toBe("自动拾取 关闭 · 永远拾取 关闭 · S级鱼截图 关闭");
   });
 });
