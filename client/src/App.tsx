@@ -4,11 +4,14 @@ import {
   Copy,
   Fish,
   Gamepad2,
+  Maximize2,
+  Monitor,
   Music2,
   Pause,
   Pencil,
   Play,
   HelpCircle,
+  RefreshCw,
   Settings,
   Sparkles,
   Square,
@@ -19,11 +22,15 @@ import { globalSettingsOption, initialGames, nteOptions } from "./clientData";
 import {
   buildInitialClientState,
   getVisibleOptionKeys,
+  refreshWindows,
   selectGame,
+  setControllerType,
   setFeatureOptionValues,
   setFeatureRunState,
   setGlobalSettingsValues,
+  setTargetWindow,
   type ClientState,
+  type ControllerState,
   type FeatureDefinition,
   type GameDefinition,
   type InputOptionDefinition,
@@ -76,6 +83,7 @@ function App() {
   const [state, setState] = useState<ClientState>(() => buildInitialClientState(initialGames));
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"features" | "liveview">("features");
 
   const selectedGame = useMemo(
     () => state.games.find((game) => game.id === state.selectedGameId) ?? state.games[0],
@@ -100,6 +108,20 @@ function App() {
     setIsSettingsOpen(false);
   }
 
+  function handleControllerTypeChange(gameId: string, controllerType: string) {
+    setState((current) => setControllerType(current, gameId, controllerType));
+  }
+
+  function handleTargetWindowChange(gameId: string, targetWindow: string) {
+    setState((current) => setTargetWindow(current, gameId, targetWindow));
+  }
+
+  function handleRefreshWindows(gameId: string) {
+    // TODO: replace with Tauri command invocation
+    const mockWindows = ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"];
+    setState((current) => refreshWindows(current, gameId, mockWindows));
+  }
+
   return (
     <main className="app-shell">
       <header className="top-bar">
@@ -122,27 +144,49 @@ function App() {
           </button>
         </div>
 
-        <GameSwitcher games={state.games} selectedGameId={state.selectedGameId} onSelect={handleSelectGame} />
+        <GameSwitcher
+          games={state.games}
+          selectedGameId={state.selectedGameId}
+          viewMode={viewMode}
+          onSelectGame={(gameId) => { handleSelectGame(gameId); setViewMode("features"); }}
+          onSelectLiveView={() => setViewMode("liveview")}
+        />
       </header>
 
       {selectedGame ? (
         <section className="content-panel" aria-label={`${selectedGame.name} 功能`}>
-          <div className="game-heading">
-            <div>
-              <p className="eyebrow">当前游戏</p>
-              <h2>{selectedGame.name}</h2>
-            </div>
-            <span className={`status-pill status-${selectedGame.status}`}>
-              <CheckCircle2 size={16} />
-              {selectedGame.status === "ready" ? "已安装" : "预留"}
-            </span>
-          </div>
+          {viewMode === "features" ? (
+            <>
+              <div className="game-heading">
+                <div>
+                  <p className="eyebrow">当前游戏</p>
+                  <h2>{selectedGame.name}</h2>
+                </div>
+                <span className={`status-pill status-${selectedGame.status}`}>
+                  <CheckCircle2 size={16} />
+                  {selectedGame.status === "ready" ? "已安装" : "预留"}
+                </span>
+              </div>
 
-          <FeatureList
-            game={selectedGame}
-            onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
-            onRunChange={handleRunChange}
-          />
+              {selectedGame.controller ? (
+                <ConnectionBar
+                  gameId={selectedGame.id}
+                  controller={selectedGame.controller}
+                  onControllerTypeChange={handleControllerTypeChange}
+                  onTargetWindowChange={handleTargetWindowChange}
+                  onRefreshWindows={handleRefreshWindows}
+                />
+              ) : null}
+
+              <FeatureList
+                game={selectedGame}
+                onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
+                onRunChange={handleRunChange}
+              />
+            </>
+          ) : (
+            <LiveViewPanel />
+          )}
         </section>
       ) : (
         <EmptyState title="尚未添加游戏" />
@@ -167,27 +211,105 @@ function App() {
   );
 }
 
+type ConnectionBarProps = {
+  gameId: string;
+  controller: ControllerState;
+  onControllerTypeChange: (gameId: string, controllerType: string) => void;
+  onTargetWindowChange: (gameId: string, targetWindow: string) => void;
+  onRefreshWindows: (gameId: string) => void;
+};
+
+const controllerTypes = ["Win PostMessageWithWindowPos", "Win SendMessage", "ADB Input"];
+
+function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWindowChange, onRefreshWindows }: ConnectionBarProps) {
+  return (
+    <div className="connection-bar">
+      <div className="connection-row">
+        <span className="connection-label">控制器类型</span>
+        <select
+          value={controller.controllerType}
+          onChange={(event) => onControllerTypeChange(gameId, event.target.value)}
+        >
+          {controllerTypes.map((type) => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+      </div>
+      <div className="connection-row">
+        <span className="connection-label">目标窗口</span>
+        <div className="connection-control">
+          <select
+            value={controller.targetWindow}
+            onChange={(event) => onTargetWindowChange(gameId, event.target.value)}
+          >
+            <option value="">请选择窗口</option>
+            {controller.availableWindows.map((win) => (
+              <option key={win} value={win}>{win}</option>
+            ))}
+          </select>
+          <button className="icon-button" type="button" aria-label="刷新窗口列表" title="刷新窗口列表" onClick={() => onRefreshWindows(gameId)}>
+            <RefreshCw size={18} />
+          </button>
+        </div>
+      </div>
+      <div className="connection-status">
+        <span className={`status-dot ${controller.connected ? "connected" : ""}`} />
+        <span className="status-text">{controller.connected ? "已连接" : "未连接"}</span>
+      </div>
+    </div>
+  );
+}
+
+function LiveViewPanel() {
+  return (
+    <div className="live-view-panel">
+      <div className="live-view-header">
+        <h3>实时视图</h3>
+        <button className="icon-button" type="button" aria-label="全屏" title="全屏">
+          <Maximize2 size={18} />
+        </button>
+      </div>
+      <div className="live-view-content">
+        <Monitor size={48} />
+        <p>暂无截图</p>
+        <p className="live-view-hint">选择目标窗口并启动功能后，此处将显示实时画面</p>
+      </div>
+    </div>
+  );
+}
+
 type GameSwitcherProps = {
   games: GameDefinition[];
   selectedGameId: string;
-  onSelect: (gameId: string) => void;
+  viewMode: "features" | "liveview";
+  onSelectGame: (gameId: string) => void;
+  onSelectLiveView: () => void;
 };
 
-function GameSwitcher({ games, selectedGameId, onSelect }: GameSwitcherProps) {
+function GameSwitcher({ games, selectedGameId, viewMode, onSelectGame, onSelectLiveView }: GameSwitcherProps) {
   return (
     <nav className="game-switcher" aria-label="游戏选择">
       {games.map((game) => (
         <button
-          className={`game-icon ${game.id === selectedGameId ? "selected" : ""}`}
+          className={`game-icon ${game.id === selectedGameId && viewMode === "features" ? "selected" : ""}`}
           key={game.id}
           type="button"
           aria-label={game.name}
           title={game.name}
-          onClick={() => onSelect(game.id)}
+          onClick={() => { onSelectGame(game.id); }}
         >
           <span>{game.icon ? <img src={game.icon} alt={game.name} /> : game.shortName}</span>
         </button>
       ))}
+      <button
+        className={`game-icon live-view-btn ${viewMode === "liveview" ? "selected" : ""}`}
+        type="button"
+        aria-label="实时视图"
+        title="实时视图"
+        onClick={onSelectLiveView}
+      >
+        <span><Monitor size={20} /></span>
+      </button>
     </nav>
   );
 }

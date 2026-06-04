@@ -166,6 +166,12 @@ export const initialGames: GameDefinition[] = [
     shortName: "异",
     icon: "./src/assets/nte-icon.png",
     status: "ready",
+    controller: {
+      controllerType: "Win PostMessageWithWindowPos",
+      targetWindow: "",
+      availableWindows: ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"],
+      connected: false
+    },
     features: [
       {
         id: "fish",

@@ -226,6 +226,122 @@ h3 {
   color: var(--color-text-muted);
 }
 
+.connection-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 14px 20px;
+  align-items: center;
+  width: min(1060px, 100%);
+  margin: 0 auto 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  background: var(--color-surface-muted);
+}
+
+.connection-row {
+  display: grid;
+  gap: 6px;
+}
+
+.connection-label {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.connection-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connection-control select,
+.connection-row select {
+  width: 100%;
+  min-height: var(--size-touch);
+  padding: 0 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: center;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  transition: background-color 160ms ease;
+}
+
+.status-dot.connected {
+  background: var(--color-success);
+}
+
+.connection-status .status-text {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-dot.connected + .status-text {
+  color: var(--color-success);
+}
+
+.live-view-btn span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-view-panel {
+  width: min(1060px, 100%);
+  margin: 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.live-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.live-view-header h3 {
+  font-size: 16px;
+}
+
+.live-view-content {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 420px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.live-view-content p {
+  font-size: 16px;
+}
+
+.live-view-hint {
+  font-size: 13px !important;
+  color: var(--color-text-muted);
+}
+
 .feature-list {
   display: grid;
   gap: 16px;
@@ -615,6 +731,14 @@ h3 {
   .option-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .connection-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-status {
+    justify-self: start;
   }
 
   .indented-option {

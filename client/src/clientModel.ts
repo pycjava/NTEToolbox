@@ -51,6 +51,17 @@ export type FeatureDefinition = {
   optionValues?: Record<string, OptionValue>;
 };
 
+export type ControllerState = {
+  /** 控制器类型，如 "Win PostMessageWithWindowPos" */
+  controllerType: string;
+  /** 当前选中的窗口标识（窗口标题或 hwnd） */
+  targetWindow: string;
+  /** 可选窗口列表 */
+  availableWindows: string[];
+  /** 连接状态 */
+  connected: boolean;
+};
+
 export type GameDefinition = {
   id: string;
   name: string;
@@ -58,6 +69,7 @@ export type GameDefinition = {
   icon?: string;
   status: GameStatus;
   features: FeatureDefinition[];
+  controller?: ControllerState;
 };
 
 export type ClientState = {
@@ -211,6 +223,69 @@ export function setGlobalSettingsValues(
       ...state.settingsValues,
       ...values
     }
+  };
+}
+
+export function setControllerType(
+  state: ClientState,
+  gameId: string,
+  controllerType: string
+): ClientState {
+  return {
+    ...state,
+    games: state.games.map((game) =>
+      game.id !== gameId || !game.controller
+        ? game
+        : {
+            ...game,
+            controller: { ...game.controller, controllerType, connected: false, targetWindow: "" }
+          }
+    )
+  };
+}
+
+export function setTargetWindow(
+  state: ClientState,
+  gameId: string,
+  targetWindow: string
+): ClientState {
+  return {
+    ...state,
+    games: state.games.map((game) =>
+      game.id !== gameId || !game.controller
+        ? game
+        : {
+            ...game,
+            controller: {
+              ...game.controller,
+              targetWindow,
+              connected: targetWindow !== ""
+            }
+          }
+    )
+  };
+}
+
+export function refreshWindows(
+  state: ClientState,
+  gameId: string,
+  windows: string[]
+): ClientState {
+  return {
+    ...state,
+    games: state.games.map((game) =>
+      game.id !== gameId || !game.controller
+        ? game
+        : {
+            ...game,
+            controller: {
+              ...game.controller,
+              availableWindows: windows,
+              targetWindow: "",
+              connected: false
+            }
+          }
+    )
   };
 }
 
