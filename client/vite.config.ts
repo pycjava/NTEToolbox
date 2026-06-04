@@ -9,7 +9,11 @@ export default defineConfig({
     strictPort: true
   },
   test: {
+    environmentMatchGlobs: [
+      ["src/**/*.tsx", "jsdom"],
+      ["src/**/*.test.tsx", "jsdom"]
+    ],
     environment: "node",
-    include: ["src/**/*.test.ts"]
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"]
   }
 });

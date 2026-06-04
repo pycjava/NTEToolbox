@@ -3,11 +3,72 @@ import { describe, expect, it } from "vitest";
 import {
   addGame,
   buildInitialClientState,
+  getVisibleOptionKeys,
   selectGame,
   setFeatureConfig,
+  setFeatureOptionValue,
   setFeatureRunState,
-  type GameDefinition
+  type GameDefinition,
+  type OptionDefinition
 } from "./clientModel";
+
+const fishOptionDefinitions: Record<string, OptionDefinition> = {
+  "钓鱼终止时间开关": {
+    key: "钓鱼终止时间开关",
+    type: "switch",
+    label: "终止时间",
+    description: "启用后可通过下拉列表选择钓鱼持续时长；到达时间后终止该节点",
+    defaultValue: true,
+    enabledOptionKeys: ["钓鱼终止时长"]
+  },
+  "钓鱼终止时长": {
+    key: "钓鱼终止时长",
+    type: "select",
+    label: "钓鱼时长",
+    defaultValue: "2小时",
+    cases: ["30分钟", "1小时", "2小时", "3小时", "4小时", "6小时", "8小时", "12小时"]
+  },
+  "溜鱼设置": {
+    key: "溜鱼设置",
+    type: "input",
+    label: "溜鱼设置",
+    inputs: [
+      {
+        name: "溜鱼_midpoint_pix_range",
+        label: "溜鱼中点停顿范围 (pix)",
+        pipelineType: "int",
+        defaultValue: "5"
+      },
+      {
+        name: "溜鱼_midpoint_sleep_time",
+        label: "溜鱼中点停顿时间 (ms)",
+        pipelineType: "int",
+        defaultValue: "5"
+      }
+    ]
+  },
+  "卖鱼买换饵开关": {
+    key: "卖鱼买换饵开关",
+    type: "switch",
+    label: "自动卖鱼买换饵 (抢占鼠标)",
+    description: "无饵或满舱时，按顺序执行卖鱼、买饵、换饵。由于涉及点击操作，会抢占鼠标",
+    defaultValue: true
+  },
+  "卖鱼买换饵设置": {
+    key: "卖鱼买换饵设置",
+    type: "input",
+    label: "卖鱼买换饵设置",
+    inputs: [
+      {
+        name: "买饵次数",
+        label: "买饵次数",
+        description: "次数 n 代表买 n * 99 个饵",
+        pipelineType: "int",
+        defaultValue: "4"
+      }
+    ]
+  }
+};
 
 const games: GameDefinition[] = [
   {
@@ -20,7 +81,8 @@ const games: GameDefinition[] = [
         id: "fish",
         name: "钓鱼",
         description: "自动钓鱼、溜鱼、卖鱼买饵",
-        configSummary: "终止时间 2小时 · 自动买饵 关闭"
+        configSummary: "",
+        optionKeys: ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"]
       },
       {
         id: "piano",
@@ -56,9 +118,9 @@ describe("client model", () => {
 
   it("updates the visible feature configuration summary", () => {
     const state = buildInitialClientState(games);
-    const next = setFeatureConfig(state, "nte", "fish", "终止时间 4小时 · 自动买饵 开启");
+    const next = setFeatureConfig(state, "nte", "fish", "终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
 
-    expect(next.games[0].features[0].configSummary).toBe("终止时间 4小时 · 自动买饵 开启");
+    expect(next.games[0].features[0].configSummary).toBe("终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
   });
 
   it("marks only the selected feature as running", () => {
@@ -82,5 +144,59 @@ describe("client model", () => {
     expect(next.games).toHaveLength(3);
     expect(next.selectedGameId).toBe("new-game");
   });
-}
-);
+
+  it("initializes fishing options with screenshot defaults", () => {
+    const state = buildInitialClientState(games);
+    const fish = state.games[0].features[0];
+
+    expect(fish.optionValues).toMatchObject({
+      "钓鱼终止时间开关": true,
+      "钓鱼终止时长": "2小时",
+      "溜鱼_midpoint_pix_range": "5",
+      "溜鱼_midpoint_sleep_time": "5",
+      "卖鱼买换饵开关": true,
+      "买饵次数": "4"
+    });
+    expect(fish.configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
+  });
+
+  it("updates fishing duration in option values and summary", () => {
+    const state = buildInitialClientState(games);
+    const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼终止时长", "4小时");
+    const fish = next.games[0].features[0];
+
+    expect(fish.optionValues?.["钓鱼终止时长"]).toBe("4小时");
+    expect(fish.configSummary).toBe("终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
+  });
+
+  it("hides fishing duration when end time is disabled", () => {
+    const state = buildInitialClientState(games);
+    const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼终止时间开关", false);
+    const fish = next.games[0].features[0];
+
+    expect(getVisibleOptionKeys(fish.optionKeys ?? [], fishOptionDefinitions, fish.optionValues ?? {})).not.toContain("钓鱼终止时长");
+    expect(fish.configSummary).toBe("终止时间 关闭 · 自动卖鱼买换饵 开启 · 买饵 4次");
+  });
+
+  it("saves fishing midpoint inputs", () => {
+    const state = buildInitialClientState(games);
+    const next = setFeatureOptionValue(
+      setFeatureOptionValue(state, "nte", "fish", "溜鱼_midpoint_pix_range", "8"),
+      "nte",
+      "fish",
+      "溜鱼_midpoint_sleep_time",
+      "12"
+    );
+    const fish = next.games[0].features[0];
+
+    expect(fish.optionValues?.["溜鱼_midpoint_pix_range"]).toBe("8");
+    expect(fish.optionValues?.["溜鱼_midpoint_sleep_time"]).toBe("12");
+  });
+
+  it("updates summary when auto bait is disabled", () => {
+    const state = buildInitialClientState(games);
+    const next = setFeatureOptionValue(state, "nte", "fish", "卖鱼买换饵开关", false);
+
+    expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 关闭 · 买饵 4次");
+  });
+});

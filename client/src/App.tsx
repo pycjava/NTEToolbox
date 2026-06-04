@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   CheckCircle2,
   Copy,
@@ -10,22 +10,29 @@ import {
   Pencil,
   Play,
   Plus,
+  HelpCircle,
   Settings,
   Sparkles,
   Square,
   Upload
 } from "lucide-react";
 
-import { initialGames } from "./clientData";
+import { initialGames, nteOptions } from "./clientData";
 import {
   addGame,
   buildInitialClientState,
+  getVisibleOptionKeys,
   selectGame,
-  setFeatureConfig,
+  setFeatureOptionValues,
   setFeatureRunState,
   type ClientState,
   type FeatureDefinition,
   type GameDefinition,
+  type InputOptionDefinition,
+  type OptionDefinition,
+  type OptionValue,
+  type SelectOptionDefinition,
+  type SwitchOptionDefinition,
   type RunState
 } from "./clientModel";
 
@@ -82,8 +89,8 @@ function App() {
     setState((current) => selectGame(current, gameId));
   }
 
-  function handleSaveFeatureConfig(gameId: string, featureId: string, summary: string) {
-    setState((current) => setFeatureConfig(current, gameId, featureId, summary));
+  function handleSaveFeatureConfig(gameId: string, featureId: string, values: Record<string, OptionValue>) {
+    setState((current) => setFeatureOptionValues(current, gameId, featureId, values));
     setConfigTarget(null);
   }
 
@@ -275,11 +282,20 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
 type FeatureConfigDialogProps = {
   target: DialogFeature;
   onClose: () => void;
-  onSave: (gameId: string, featureId: string, summary: string) => void;
+  onSave: (gameId: string, featureId: string, values: Record<string, OptionValue>) => void;
 };
 
 function FeatureConfigDialog({ target, onClose, onSave }: FeatureConfigDialogProps) {
-  const [summary, setSummary] = useState(target.feature.configSummary);
+  const [values, setValues] = useState<Record<string, OptionValue>>(() => ({ ...(target.feature.optionValues ?? {}) }));
+  const optionDefinitions = target.feature.id === "fish" ? nteOptions : {};
+  const visibleOptionKeys = getVisibleOptionKeys(target.feature.optionKeys ?? [], optionDefinitions, values);
+
+  function updateValue(name: string, value: OptionValue) {
+    setValues((current) => ({
+      ...current,
+      [name]: value
+    }));
+  }
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -294,40 +310,139 @@ function FeatureConfigDialog({ target, onClose, onSave }: FeatureConfigDialogPro
           </button>
         </div>
 
-        <label className="field-group">
-          <span>摘要</span>
-          <input value={summary} onChange={(event) => setSummary(event.target.value)} />
-        </label>
+        {visibleOptionKeys.length > 0 ? (
+          <div className="config-grid">
+            {visibleOptionKeys.map((optionKey) => {
+              const optionDefinition = optionDefinitions[optionKey];
+              if (!optionDefinition) return null;
 
-        <div className="config-grid">
-          <label className="toggle-row">
-            <input type="checkbox" defaultChecked={target.feature.id === "fish"} />
-            <span>主要功能</span>
-          </label>
-          <label className="toggle-row">
-            <input type="checkbox" />
-            <span>启动前确认窗口</span>
-          </label>
-          <label className="field-group compact">
-            <span>预设</span>
-            <select defaultValue="default">
-              <option value="default">默认</option>
-              <option value="safe">保守</option>
-              <option value="fast">快速</option>
-            </select>
-          </label>
-        </div>
+              return (
+                <OptionField
+                  key={optionKey}
+                  option={optionDefinition}
+                  values={values}
+                  onChange={updateValue}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-config">这个功能暂时没有可配置项。</div>
+        )}
 
         <div className="modal-actions">
           <button className="secondary-action" type="button" onClick={onClose}>
             取消
           </button>
-          <button className="primary-action" type="button" onClick={() => onSave(target.gameId, target.feature.id, summary)}>
+          <button className="primary-action" type="button" onClick={() => onSave(target.gameId, target.feature.id, values)}>
             保存
           </button>
         </div>
       </section>
     </div>
+  );
+}
+
+type OptionFieldProps = {
+  option: OptionDefinition;
+  values: Record<string, OptionValue>;
+  onChange: (name: string, value: OptionValue) => void;
+};
+
+function OptionField({ option, values, onChange }: OptionFieldProps) {
+  if (option.type === "switch") {
+    return <SwitchOption option={option} value={values[option.key] === true} onChange={onChange} />;
+  }
+
+  if (option.type === "select") {
+    return <SelectOption option={option} value={String(values[option.key] ?? option.defaultValue)} onChange={onChange} />;
+  }
+
+  return <InputOption option={option} values={values} onChange={onChange} />;
+}
+
+function OptionLabel({ label, description }: { label: string; description?: string }) {
+  return (
+    <span className="option-label">
+      {label}
+      {description ? (
+        <span className="hint" title={description} aria-label={description}>
+          <HelpCircle size={15} />
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function SwitchOption({
+  option,
+  value,
+  onChange
+}: {
+  option: SwitchOptionDefinition;
+  value: boolean;
+  onChange: (name: string, value: OptionValue) => void;
+}) {
+  return (
+    <label className="switch-row">
+      <OptionLabel label={option.label} description={option.description} />
+      <input
+        checked={value}
+        type="checkbox"
+        onChange={(event) => onChange(option.key, event.target.checked)}
+      />
+    </label>
+  );
+}
+
+function SelectOption({
+  option,
+  value,
+  onChange
+}: {
+  option: SelectOptionDefinition;
+  value: string;
+  onChange: (name: string, value: OptionValue) => void;
+}) {
+  return (
+    <label className="option-row indented-option">
+      <OptionLabel label={option.label} description={option.description} />
+      <select value={value} onChange={(event) => onChange(option.key, event.target.value)}>
+        {option.cases.map((caseName) => (
+          <option key={caseName} value={caseName}>
+            {caseName}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function InputOption({
+  option,
+  values,
+  onChange
+}: {
+  option: InputOptionDefinition;
+  values: Record<string, OptionValue>;
+  onChange: (name: string, value: OptionValue) => void;
+}) {
+  return (
+    <fieldset className="option-group">
+      <legend>{option.label}</legend>
+      {option.description ? <p>{option.description}</p> : null}
+      {option.inputs.map((input) => (
+        <label className="option-row" key={input.name}>
+          <OptionLabel label={input.label} description={input.description} />
+          <input
+            inputMode={input.pipelineType === "int" ? "numeric" : "text"}
+            type={input.pipelineType === "int" ? "number" : "text"}
+            value={String(values[input.name] ?? input.defaultValue)}
+            onChange={(event) => onChange(input.name, event.target.value)}
+          />
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
