@@ -55,6 +55,7 @@ export type GameDefinition = {
   id: string;
   name: string;
   shortName: string;
+  icon?: string;
   status: GameStatus;
   features: FeatureDefinition[];
 };

@@ -63,14 +63,17 @@ select:focus-visible {
 }
 
 .brand-mark {
-  width: 118px;
-  height: 28px;
-  border-radius: 9px;
-  background:
-    linear-gradient(90deg, #d8ebff 0 28%, transparent 28% 39%, #cbe4ff 39% 52%, transparent 52% 63%, #d8ebff 63% 100%),
-    #eff6ff;
-  color: transparent;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  overflow: hidden;
   user-select: none;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 h1,
@@ -165,31 +168,17 @@ h3 {
   line-height: 1;
 }
 
+.game-icon span img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
 .game-icon.selected {
   background: var(--color-surface);
   color: var(--color-warning);
   box-shadow: 0 7px 20px rgb(15 23 42 / 8%);
-}
-
-.add-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--color-warning);
-  color: #ffffff;
-  box-shadow: 0 14px 26px rgb(249 115 22 / 28%);
-  transition:
-    transform 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.add-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 17px 30px rgb(249 115 22 / 32%);
 }
 
 .content-panel {
@@ -569,20 +558,6 @@ h3 {
 .toggle-row input {
   width: 18px;
   height: 18px;
-}
-
-.file-target {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 52px;
-  padding: 0 14px;
-  border: 1px dashed #b7c2d1;
-  border-radius: 14px;
-  background: var(--color-surface-muted);
-  color: var(--color-text-muted);
-  font-weight: 700;
 }
 
 .modal-actions {

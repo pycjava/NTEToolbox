@@ -1,7 +1,7 @@
 [package]
 name = "ntetoolbox-client"
 version = "0.0.0"
-description = "NTEToolbox Tauri client prototype"
+description = "MaaToolbox Tauri client prototype"
 authors = ["op200"]
 edition = "2021"
 

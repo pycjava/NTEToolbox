@@ -11,7 +11,7 @@ describe("App", () => {
   it("renders the client shell without a React global", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "NTEToolbox" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "MaaToolbox" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "异环 NTE" })).toBeTruthy();
   });
 

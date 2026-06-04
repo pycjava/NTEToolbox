@@ -3,13 +3,11 @@ import {
   CheckCircle2,
   Copy,
   Fish,
-  FolderOpen,
   Gamepad2,
   Music2,
   Pause,
   Pencil,
   Play,
-  Plus,
   HelpCircle,
   Settings,
   Sparkles,
@@ -19,7 +17,6 @@ import {
 
 import { globalSettingsOption, initialGames, nteOptions } from "./clientData";
 import {
-  addGame,
   buildInitialClientState,
   getVisibleOptionKeys,
   selectGame,
@@ -78,7 +75,6 @@ function getGameSubtitle(game: GameDefinition) {
 function App() {
   const [state, setState] = useState<ClientState>(() => buildInitialClientState(initialGames));
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
-  const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const selectedGame = useMemo(
@@ -104,20 +100,15 @@ function App() {
     setIsSettingsOpen(false);
   }
 
-  function handleAddGame(game: GameDefinition) {
-    setState((current) => addGame(current, game));
-    setIsAddOpen(false);
-  }
-
   return (
     <main className="app-shell">
       <header className="top-bar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            NT
+            <img src="./src/assets/nte-icon.png" alt="" />
           </div>
           <div>
-            <h1>NTEToolbox</h1>
+            <h1>MaaToolbox</h1>
             <p>{selectedGame?.name ?? "未选择"}</p>
           </div>
         </div>
@@ -132,10 +123,6 @@ function App() {
         </div>
 
         <GameSwitcher games={state.games} selectedGameId={state.selectedGameId} onSelect={handleSelectGame} />
-
-        <button className="add-button" type="button" aria-label="添加游戏" title="添加游戏" onClick={() => setIsAddOpen(true)}>
-          <Plus size={26} />
-        </button>
       </header>
 
       {selectedGame ? (
@@ -158,7 +145,7 @@ function App() {
           />
         </section>
       ) : (
-        <EmptyState title="尚未添加游戏" actionLabel="添加游戏" onAction={() => setIsAddOpen(true)} />
+        <EmptyState title="尚未添加游戏" />
       )}
 
       {configTarget ? (
@@ -169,7 +156,6 @@ function App() {
         />
       ) : null}
 
-      {isAddOpen ? <AddGameDialog onClose={() => setIsAddOpen(false)} onAdd={handleAddGame} /> : null}
       {isSettingsOpen ? (
         <SettingsDialog
           settingsValues={state.settingsValues}
@@ -199,7 +185,7 @@ function GameSwitcher({ games, selectedGameId, onSelect }: GameSwitcherProps) {
           title={game.name}
           onClick={() => onSelect(game.id)}
         >
-          <span>{game.shortName}</span>
+          <span>{game.icon ? <img src={game.icon} alt={game.name} /> : game.shortName}</span>
         </button>
       ))}
     </nav>
@@ -214,7 +200,7 @@ type FeatureListProps = {
 
 function FeatureList({ game, onConfigure, onRunChange }: FeatureListProps) {
   if (game.features.length === 0) {
-    return <EmptyState title="没有可用功能" actionLabel="添加游戏" />;
+    return <EmptyState title="没有可用功能" />;
   }
 
   return (
@@ -396,14 +382,14 @@ function SwitchOption({
   onChange: (name: string, value: OptionValue) => void;
 }) {
   return (
-    <label className="switch-row">
+    <div className="switch-row">
       <OptionLabel label={option.label} description={option.description} />
       <input
         checked={value}
         type="checkbox"
         onChange={(event) => onChange(option.key, event.target.checked)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -441,7 +427,7 @@ function InputOption({
 }) {
   return (
     <fieldset className="option-group">
-      <legend>{option.label}</legend>
+      {option.label ? <legend>{option.label}</legend> : null}
       {option.description ? <p>{option.description}</p> : null}
       {option.inputs.map((input) => (
         <label className="option-row" key={input.name}>
@@ -455,63 +441,6 @@ function InputOption({
         </label>
       ))}
     </fieldset>
-  );
-}
-
-type AddGameDialogProps = {
-  onClose: () => void;
-  onAdd: (game: GameDefinition) => void;
-};
-
-function AddGameDialog({ onClose, onAdd }: AddGameDialogProps) {
-  const [name, setName] = useState("");
-  const trimmedName = name.trim();
-
-  function handleAdd() {
-    if (!trimmedName) return;
-
-    onAdd({
-      id: `local-${Date.now()}`,
-      name: trimmedName,
-      shortName: Array.from(trimmedName)[0] ?? "新",
-      status: "placeholder",
-      features: []
-    });
-  }
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-game-title" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">添加游戏</p>
-            <h2 id="add-game-title">本地游戏</h2>
-          </div>
-          <button className="row-icon-button" type="button" aria-label="关闭" onClick={onClose}>
-            ×
-          </button>
-        </div>
-
-        <label className="field-group">
-          <span>名称</span>
-          <input value={name} autoFocus onChange={(event) => setName(event.target.value)} placeholder="例如：新游戏" />
-        </label>
-
-        <button className="file-target" type="button">
-          <FolderOpen size={20} />
-          选择 interface.json
-        </button>
-
-        <div className="modal-actions">
-          <button className="secondary-action" type="button" onClick={onClose}>
-            取消
-          </button>
-          <button className="primary-action" type="button" disabled={!trimmedName} onClick={handleAdd}>
-            添加
-          </button>
-        </div>
-      </section>
-    </div>
   );
 }
 
@@ -578,17 +507,11 @@ function SettingsDialog({
   );
 }
 
-function EmptyState({ title, actionLabel, onAction }: { title: string; actionLabel: string; onAction?: () => void }) {
+function EmptyState({ title }: { title: string }) {
   return (
     <div className="empty-state">
       <Gamepad2 size={34} />
       <h3>{title}</h3>
-      {onAction ? (
-        <button className="primary-action" type="button" onClick={onAction}>
-          <Plus size={17} />
-          {actionLabel}
-        </button>
-      ) : null}
     </div>
   );
 }

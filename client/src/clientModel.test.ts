@@ -98,7 +98,7 @@ const assistOptionDefinitions: Record<string, OptionDefinition> = {
   "实时辅助_S级鱼截图_设置": {
     key: "实时辅助_S级鱼截图_设置",
     type: "input",
-    label: "S级鱼截图设置",
+    label: "",
     inputs: [
       {
         name: "S级鱼截图保存目录",

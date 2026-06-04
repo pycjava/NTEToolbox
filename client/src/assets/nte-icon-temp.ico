@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<!-- saved from url=(0014) about:internet  -->
+	<meta charset="utf-8" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="renderer" content="webkit|ie-comp|ie-stand">
+	<meta name="format-detection" content="telephone=no" />
+	<meta name="thumbnail" content="https://yh.wanmei.com/public/images/thumbnail.jpg" />
+	<meta name="viewport" content="width=device-width,initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
+	<meta name="description" content="《异环》是Hotta Studio自主研发的超自然都市开放世界RPG。故事将从海特洛市启篇，作为首位「无证上岗」的「异象猎人」，你将成为接取民间异象委托维持周转的古董店「伊波恩」的一员，与个性迥异、能力非凡的伙伴们一起探索各城市的大小谜团，历经有笑有泪的各式奇遇，演绎独属于你们的都市物语。" />
+	<meta name="keywords" content="异环,开放世界,都市开放世界,都市,赛车,超自然,异象,完美世界,幻塔,薄荷,娜娜莉,早雾,RPG,二次元" />
+	<title>《异环》官方网站-超自然都市开放世界RPG</title>
+	<style>
+		body{ position: relative; -webkit-text-size-adjust: 100%; font-family: "Microsoft YaHei", Arial, sans-serif;}
+		body, div, dl, dt, dd, ul, ol, li, h1, h2, h3, h4, h5, h6, pre, code, form, fieldset, legend, input, textarea, p, blockquote, th, td, span, a { margin: 0; padding: 0; font-size: inherit; font-family: inherit; vertical-align: baseline;}
+		ul, ol { list-style: none;}
+		a { text-decoration: none; color: inherit; cursor: pointer; outline: none; pointer-events: auto!important;}
+		a:hover{ text-decoration:none;}
+		img { border: 0; object-fit: cover;}
+	</style>
+	<script type="text/javascript" src="https://static.games.wanmei.com/public/js/isMobile.js"></script>
+	<script type="text/javascript">
+		(function(){
+			var style = document.createElement('style');
+			style.type = 'text/css';
+			document.head.appendChild(style);
+
+			var is_mobile = isMobile();
+			var is_ipad = /ipad/i.test(navigator.userAgent);
+			if (is_mobile && !is_ipad) {
+				var styleStr = `
+					html, body{ height: 100%; background: #1d1d1d; overflow: hidden;}
+					body{ font-size: 16px;}
+					.wrap404{ position: relative; height: 100%; background: url(https://yh.wanmei.com/m/images/page404/bg.jpg) repeat-y center top; background-size: 7.5rem 16.26rem;}
+					.cont404{ position: absolute; top: 4.07rem; left: 50%; transform: translate(-50%, 0); width: 6.74rem; height: 5.17rem; background: url(https://yh.wanmei.com/m/images/page404/cont404.png) no-repeat 0 0; background-size: 100% auto;}
+					.goBackIndex{ position: absolute; top: 9.78rem; left: 50%; transform: translate(-50%, 0); width: 4.66rem; height: .8rem; background: url(https://yh.wanmei.com/m/images/page404/goBackIndex.png) no-repeat 0 0; background-size: 100% auto;}
+				`;
+				(function(w) {
+					var docEl = document.documentElement,
+						resizeEvt = "orientationchange" in window ? "orientationchange" : "resize",
+						recalc = function() {
+							var deviceWidth = docEl.clientWidth > w ? w : docEl.clientWidth;
+							docEl.style.fontSize = deviceWidth * 100 / w + "px";
+						};
+					if (!document.addEventListener) return;
+					window.addEventListener(resizeEvt, recalc, false);
+					document.addEventListener("DOMContentLoaded", recalc, false);
+				})(750);
+			}else{
+				var styleStr = `
+					html, body{ height: 100%; background: #1d1d1d;}
+					body{ min-width: 19.2rem; overflow: hidden; opacity: 0; font-size: .16rem;}
+					.wrap404{ position: relative; height: 100%; background: url(https://yh.wanmei.com/images/page404/bg.jpg) no-repeat center center; background-size: cover;}
+					.goBackIndex{ position: absolute; top: 50%; left: 50%; transform: translate(-50%, 4.7rem); width: 4.86rem; height: .83rem; background: url(https://yh.wanmei.com/images/page404/goBackIndex.png) no-repeat 0 0; background-size: 100% auto;}
+				`;
+				(function (doc, win) {
+					var _w = 2560;
+					var _h = 1440;
+					var _p = _w / _h;
+					var docEl = doc.documentElement, resizeEvt = 'orientationchange' in window ? 'orientationchange' : 'resize',
+						recalc = function () {
+							var clientWidth = docEl.clientWidth;
+							var clientHeight = docEl.clientHeight;
+							if (clientWidth / clientHeight < _p) {
+								clientWidth = _p * clientHeight;
+							}
+							var wid = 100 * (clientWidth / 2560);
+							docEl.style.fontSize = wid + 'px';
+							document.querySelector('body').style.opacity = 1;
+						};
+					if (!doc.addEventListener) return;
+					win.addEventListener(resizeEvt, recalc, false);
+					doc.addEventListener('DOMContentLoaded', recalc, false);
+				})(document, window);
+			}
+			var cssTree = document.createTextNode(styleStr);
+			style.appendChild(cssTree);
+		}());
+	</script>
+</head>
+
+<body>
+	<div class="wrap404">
+		<div class="cont404"></div>
+		<a href="https://yh.wanmei.com/index.html" class="goBackIndex"></a>
+	</div>
+
+	<script type="text/javascript" src="https://static.games.wanmei.com/public/js/stat.js"></script>
+</body>
+
+</html>
