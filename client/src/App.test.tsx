@@ -1,21 +1,34 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn()
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock
+}));
+
 afterEach(() => {
+  invokeMock.mockReset();
   cleanup();
 });
 
 describe("App", () => {
   it("renders the client shell without a React global", () => {
+    invokeMock.mockResolvedValue(null);
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "MaaToolbox" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "异环 NTE" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "NTEToolbox" })).toBeTruthy();
+    expect(screen.getByText("异环工具箱")).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "模拟器窗口 1" })).toBeNull();
   });
 
   it("opens piano configuration with keyboard input fields", () => {
+    invokeMock.mockResolvedValue(null);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "编辑弹钢琴 (键盘输入)" }));
@@ -29,6 +42,7 @@ describe("App", () => {
   });
 
   it("opens realtime assist configuration with pickup and screenshot controls", () => {
+    invokeMock.mockResolvedValue(null);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "编辑实时辅助" }));
@@ -41,7 +55,25 @@ describe("App", () => {
     expect(within(dialog).getByDisplayValue("5")).toBeTruthy();
   });
 
+  it("keeps running state inline on the feature row after launch", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: "实时视图" })).toBeNull();
+
+    const fishRow = screen.getByRole("article", { name: /钓鱼/ });
+    const pianoRow = screen.getByRole("article", { name: /弹钢琴/ });
+
+    fireEvent.click(within(fishRow).getByRole("button", { name: "启动" }));
+
+    expect(within(fishRow).getByText("运行中")).toBeTruthy();
+    expect(within(fishRow).getByRole("button", { name: "暂停" })).toBeTruthy();
+    expect(within(fishRow).getByRole("button", { name: "停止" })).toBeTruthy();
+    expect(within(pianoRow).getByText("就绪")).toBeTruthy();
+  });
+
   it("shows global settings in the client settings dialog and saves local values", () => {
+    invokeMock.mockResolvedValue(null);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
@@ -61,5 +93,36 @@ describe("App", () => {
     const reopenedDialog = screen.getByRole("dialog", { name: "设置" });
     expect(within(reopenedDialog).getByLabelText("debug 模式开关 (`1` 为开 `0` 为关)")).toHaveProperty("value", "1");
     expect(within(reopenedDialog).getByLabelText("日志开关 (`1` 为开 `0` 为关)")).toHaveProperty("value", "1");
+  });
+
+  it("persists feature configuration through the Tauri backend", async () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑钓鱼" }));
+    const dialog = screen.getByRole("dialog", { name: "钓鱼" });
+    const baitCountInput = within(dialog).getByLabelText("买饵次数");
+
+    fireEvent.change(baitCountInput, { target: { value: "9" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    expect(invokeMock).toHaveBeenCalledWith("save_client_config", expect.objectContaining({
+      config: expect.objectContaining({
+        games: expect.objectContaining({
+          nte: expect.objectContaining({
+            features: expect.objectContaining({
+              fish: expect.objectContaining({
+                optionValues: expect.objectContaining({ "买饵次数": "9" }),
+                pipelineOverride: expect.objectContaining({
+                  "钓鱼": expect.objectContaining({
+                    attach: expect.objectContaining({ "买饵次数": 9 })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    }));
   });
 });

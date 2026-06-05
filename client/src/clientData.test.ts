@@ -78,10 +78,11 @@ describe("client data adapter", () => {
   it("builds games, controllers, and options from interface config", () => {
     const data = buildClientDataFromInterface(interfaceConfig);
 
-    expect(data.initialGames).toHaveLength(3);
+    expect(data.initialGames).toHaveLength(1);
     expect(data.initialGames[0]).toMatchObject({
       id: "nte",
-      name: "异环 NTE",
+      name: "NTEToolbox",
+      description: "异环工具箱",
       shortName: "异",
       status: "ready"
     });
@@ -91,6 +92,7 @@ describe("client data adapter", () => {
       "ADB"
     ]);
     expect(data.initialGames[0].controller?.controllerType).toBe("Win PostMessage (默认)");
+    expect(data.initialGames[0].controller?.availableWindows).toEqual([]);
     expect(data.initialGames[0].features.map((feature) => feature.name)).toEqual([
       "钓鱼",
       "弹钢琴 (键盘输入)"

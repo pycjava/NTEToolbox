@@ -5,7 +5,8 @@ import type {
   InputOptionDefinition,
   OptionDefinition,
   OptionInputDefinition,
-  OptionValue
+  OptionValue,
+  PipelineOverride
 } from "./clientModel";
 
 type MaaInterfaceConfig = {
@@ -34,6 +35,7 @@ type MaaOptionDefinition = {
   inputs?: MaaInputDefinition[];
   cases?: MaaCaseDefinition[];
   default_case?: string;
+  pipeline_override?: PipelineOverride;
 };
 
 type MaaCaseDefinition = {
@@ -41,6 +43,7 @@ type MaaCaseDefinition = {
   label?: string;
   description?: string;
   option?: string[];
+  pipeline_override?: PipelineOverride;
 };
 
 type MaaInputDefinition = {
@@ -60,10 +63,8 @@ export type ClientData = {
 
 const GLOBAL_SETTINGS_TASK_NAME = "全局设置";
 const DEFAULT_GAME_ID = "nte";
-const DEFAULT_GAME_NAME = "异环 NTE";
 const DEFAULT_GAME_SHORT_NAME = "异";
 const DEFAULT_GAME_ICON = "/nte-icon.png";
-const FALLBACK_CONTROLLER_WINDOWS = ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"];
 
 const defaultGlobalSettingsOption: InputOptionDefinition = {
   key: GLOBAL_SETTINGS_TASK_NAME,
@@ -124,7 +125,8 @@ export function buildClientDataFromInterface(config: MaaInterfaceConfig): Client
 
   const game: GameDefinition = {
     id: DEFAULT_GAME_ID,
-    name: DEFAULT_GAME_NAME,
+    name: config.name ?? DEFAULT_GAME_ID,
+    description: config.description,
     shortName: DEFAULT_GAME_SHORT_NAME,
     icon: DEFAULT_GAME_ICON,
     status: "ready",
@@ -132,7 +134,7 @@ export function buildClientDataFromInterface(config: MaaInterfaceConfig): Client
       controllerType: defaultControllerName,
       controllerTypes: controllerNames,
       targetWindow: "",
-      availableWindows: FALLBACK_CONTROLLER_WINDOWS,
+      availableWindows: [],
       connected: false
     },
     features
@@ -142,23 +144,7 @@ export function buildClientDataFromInterface(config: MaaInterfaceConfig): Client
     globalSettingsOption,
     globalSettingsDefaultValues,
     nteOptions: optionDefinitions,
-    initialGames: [
-      game,
-      {
-        id: "future-a",
-        name: "预留游戏",
-        shortName: "预",
-        status: "placeholder",
-        features: []
-      },
-      {
-        id: "future-b",
-        name: "更多游戏",
-        shortName: "多",
-        status: "placeholder",
-        features: []
-      }
-    ]
+    initialGames: [game]
   };
 }
 
@@ -221,20 +207,34 @@ function buildOptionDefinitions(maaOptions: Record<string, MaaOptionDefinition>)
         label: option.label ?? key,
         description: option.description,
         defaultValue: option.default_case === "Yes",
-        enabledOptionKeys: option.cases?.flatMap((caseDefinition) => caseDefinition.option ?? [])
+        enabledOptionKeys: option.cases?.flatMap((caseDefinition) => caseDefinition.option ?? []),
+        pipelineOverridesByValue: {
+          true: option.cases?.find((caseDefinition) => caseDefinition.name === "Yes")?.pipeline_override,
+          false: option.cases?.find((caseDefinition) => caseDefinition.name === "No")?.pipeline_override
+        }
       };
       continue;
     }
 
     if (option.type === "select") {
       const cases = option.cases?.map((caseDefinition) => caseDefinition.label ?? caseDefinition.name) ?? [];
+      const pipelineOverridesByCase = Object.fromEntries(
+        (option.cases ?? [])
+          .filter((caseDefinition) => caseDefinition.pipeline_override)
+          .map((caseDefinition) => [
+            caseDefinition.label ?? caseDefinition.name,
+            caseDefinition.pipeline_override as PipelineOverride
+          ])
+      );
+
       optionDefinitions[key] = {
         key,
         type: "select",
         label: option.label ?? key,
         description: option.description,
         defaultValue: option.default_case ?? cases[0] ?? "",
-        cases
+        cases,
+        pipelineOverridesByCase
       };
       continue;
     }
@@ -244,7 +244,8 @@ function buildOptionDefinitions(maaOptions: Record<string, MaaOptionDefinition>)
       type: "input",
       label: option.label ?? key,
       description: option.description,
-      inputs: (option.inputs ?? []).map(toInputDefinition)
+      inputs: (option.inputs ?? []).map(toInputDefinition),
+      pipelineOverride: option.pipeline_override
     };
   }
 

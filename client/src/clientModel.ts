@@ -1,6 +1,7 @@
 export type GameStatus = "ready" | "placeholder";
 export type RunState = "idle" | "starting" | "running" | "paused" | "stopping" | "completed" | "failed";
 export type OptionValue = boolean | string;
+export type PipelineOverride = Record<string, unknown>;
 
 export type OptionInputDefinition = {
   name: string;
@@ -17,6 +18,7 @@ export type SwitchOptionDefinition = {
   description?: string;
   defaultValue: boolean;
   enabledOptionKeys?: string[];
+  pipelineOverridesByValue?: Partial<Record<"true" | "false", PipelineOverride>>;
 };
 
 export type SelectOptionDefinition = {
@@ -26,6 +28,7 @@ export type SelectOptionDefinition = {
   description?: string;
   defaultValue: string;
   cases: string[];
+  pipelineOverridesByCase?: Record<string, PipelineOverride>;
 };
 
 export type InputOptionDefinition = {
@@ -34,6 +37,7 @@ export type InputOptionDefinition = {
   label: string;
   description?: string;
   inputs: OptionInputDefinition[];
+  pipelineOverride?: PipelineOverride;
 };
 
 export type OptionDefinition =
@@ -67,6 +71,7 @@ export type ControllerState = {
 export type GameDefinition = {
   id: string;
   name: string;
+  description?: string;
   shortName: string;
   icon?: string;
   status: GameStatus;

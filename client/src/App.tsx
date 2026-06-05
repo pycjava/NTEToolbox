@@ -1,11 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   CheckCircle2,
   Copy,
   Fish,
   Gamepad2,
-  Maximize2,
-  Monitor,
   Music2,
   Pause,
   Pencil,
@@ -24,6 +23,11 @@ import {
   initialGames,
   nteOptions
 } from "./clientData";
+import {
+  applyPersistedClientConfig,
+  buildPersistedClientConfig,
+  type PersistedClientConfig
+} from "./clientConfig";
 import {
   buildInitialClientState,
   getVisibleOptionKeys,
@@ -80,6 +84,7 @@ function getRunLabel(runState: RunState | undefined) {
 }
 
 function getGameSubtitle(game: GameDefinition) {
+  if (game.description) return game.description;
   if (game.features.length === 0) return "未导入功能";
   return game.features.map((feature) => feature.name).join(" / ");
 }
@@ -90,7 +95,28 @@ function App() {
   );
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"features" | "liveview">("features");
+  const stateRef = useRef(state);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    invoke<PersistedClientConfig | null>("load_client_config")
+      .then((config) => {
+        if (cancelled || !config) return;
+        setState((current) => applyPersistedClientConfig(current, config));
+      })
+      .catch((error) => {
+        console.error("Failed to load client config", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedGame = useMemo(
     () => state.games.find((game) => game.id === state.selectedGameId) ?? state.games[0],
@@ -102,8 +128,13 @@ function App() {
   }
 
   function handleSaveFeatureConfig(gameId: string, featureId: string, values: Record<string, OptionValue>) {
-    setState((current) => setFeatureOptionValues(current, gameId, featureId, values));
+    let nextState: ClientState | null = null;
+    setState((current) => {
+      nextState = setFeatureOptionValues(current, gameId, featureId, values);
+      return nextState;
+    });
     setConfigTarget(null);
+    persistClientConfig(nextState ?? stateRef.current);
   }
 
   function handleRunChange(gameId: string, featureId: string, runState: RunState) {
@@ -111,8 +142,13 @@ function App() {
   }
 
   function handleSaveSettings(values: Record<string, OptionValue>) {
-    setState((current) => setGlobalSettingsValues(current, values));
+    let nextState: ClientState | null = null;
+    setState((current) => {
+      nextState = setGlobalSettingsValues(current, values);
+      return nextState;
+    });
     setIsSettingsOpen(false);
+    persistClientConfig(nextState ?? stateRef.current);
   }
 
   function handleControllerTypeChange(gameId: string, controllerType: string) {
@@ -120,13 +156,25 @@ function App() {
   }
 
   function handleTargetWindowChange(gameId: string, targetWindow: string) {
-    setState((current) => setTargetWindow(current, gameId, targetWindow));
+    let nextState: ClientState | null = null;
+    setState((current) => {
+      nextState = setTargetWindow(current, gameId, targetWindow);
+      return nextState;
+    });
+    persistClientConfig(nextState ?? stateRef.current);
   }
 
   function handleRefreshWindows(gameId: string) {
-    // TODO: replace with Tauri command invocation
-    const mockWindows = ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"];
-    setState((current) => refreshWindows(current, gameId, mockWindows));
+    setState((current) => refreshWindows(current, gameId, []));
+  }
+
+  function persistClientConfig(nextState: ClientState) {
+    stateRef.current = nextState;
+    void invoke("save_client_config", {
+      config: buildPersistedClientConfig(nextState, nteOptions)
+    }).catch((error) => {
+      console.error("Failed to save client config", error);
+    });
   }
 
   return (
@@ -138,7 +186,7 @@ function App() {
           </div>
           <div>
             <h1>MaaToolbox</h1>
-            <p>{selectedGame?.name ?? "未选择"}</p>
+            <p>{selectedGame ? getGameSubtitle(selectedGame) : "未选择"}</p>
           </div>
         </div>
 
@@ -154,46 +202,38 @@ function App() {
         <GameSwitcher
           games={state.games}
           selectedGameId={state.selectedGameId}
-          viewMode={viewMode}
-          onSelectGame={(gameId) => { handleSelectGame(gameId); setViewMode("features"); }}
-          onSelectLiveView={() => setViewMode("liveview")}
+          onSelectGame={handleSelectGame}
         />
       </header>
 
       {selectedGame ? (
         <section className="content-panel" aria-label={`${selectedGame.name} 功能`}>
-          {viewMode === "features" ? (
-            <>
-              <div className="game-heading">
-                <div>
-                  <p className="eyebrow">当前游戏</p>
-                  <h2>{selectedGame.name}</h2>
-                </div>
-                <span className={`status-pill status-${selectedGame.status}`}>
-                  <CheckCircle2 size={16} />
-                  {selectedGame.status === "ready" ? "已安装" : "预留"}
-                </span>
-              </div>
+          <div className="game-heading">
+            <div>
+              <p className="eyebrow">当前游戏</p>
+              <h2>{selectedGame.name}</h2>
+            </div>
+            <span className={`status-pill status-${selectedGame.status}`}>
+              <CheckCircle2 size={16} />
+              {selectedGame.status === "ready" ? "已安装" : "预留"}
+            </span>
+          </div>
 
-              {selectedGame.controller ? (
-                <ConnectionBar
-                  gameId={selectedGame.id}
-                  controller={selectedGame.controller}
-                  onControllerTypeChange={handleControllerTypeChange}
-                  onTargetWindowChange={handleTargetWindowChange}
-                  onRefreshWindows={handleRefreshWindows}
-                />
-              ) : null}
+          {selectedGame.controller ? (
+            <ConnectionBar
+              gameId={selectedGame.id}
+              controller={selectedGame.controller}
+              onControllerTypeChange={handleControllerTypeChange}
+              onTargetWindowChange={handleTargetWindowChange}
+              onRefreshWindows={handleRefreshWindows}
+            />
+          ) : null}
 
-              <FeatureList
-                game={selectedGame}
-                onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
-                onRunChange={handleRunChange}
-              />
-            </>
-          ) : (
-            <LiveViewPanel />
-          )}
+          <FeatureList
+            game={selectedGame}
+            onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
+            onRunChange={handleRunChange}
+          />
         </section>
       ) : (
         <EmptyState title="尚未添加游戏" />
@@ -268,38 +308,18 @@ function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWin
   );
 }
 
-function LiveViewPanel() {
-  return (
-    <div className="live-view-panel">
-      <div className="live-view-header">
-        <h3>实时视图</h3>
-        <button className="icon-button" type="button" aria-label="全屏" title="全屏">
-          <Maximize2 size={18} />
-        </button>
-      </div>
-      <div className="live-view-content">
-        <Monitor size={48} />
-        <p>暂无截图</p>
-        <p className="live-view-hint">选择目标窗口并启动功能后，此处将显示实时画面</p>
-      </div>
-    </div>
-  );
-}
-
 type GameSwitcherProps = {
   games: GameDefinition[];
   selectedGameId: string;
-  viewMode: "features" | "liveview";
   onSelectGame: (gameId: string) => void;
-  onSelectLiveView: () => void;
 };
 
-function GameSwitcher({ games, selectedGameId, viewMode, onSelectGame, onSelectLiveView }: GameSwitcherProps) {
+function GameSwitcher({ games, selectedGameId, onSelectGame }: GameSwitcherProps) {
   return (
     <nav className="game-switcher" aria-label="游戏选择">
       {games.map((game) => (
         <button
-          className={`game-icon ${game.id === selectedGameId && viewMode === "features" ? "selected" : ""}`}
+          className={`game-icon ${game.id === selectedGameId ? "selected" : ""}`}
           key={game.id}
           type="button"
           aria-label={game.name}
@@ -309,15 +329,6 @@ function GameSwitcher({ games, selectedGameId, viewMode, onSelectGame, onSelectL
           <span>{game.icon ? <img src={game.icon} alt={game.name} /> : game.shortName}</span>
         </button>
       ))}
-      <button
-        className={`game-icon live-view-btn ${viewMode === "liveview" ? "selected" : ""}`}
-        type="button"
-        aria-label="实时视图"
-        title="实时视图"
-        onClick={onSelectLiveView}
-      >
-        <span><Monitor size={20} /></span>
-      </button>
     </nav>
   );
 }
@@ -361,7 +372,7 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
   const isRunning = runningStates.has(currentRunState);
 
   return (
-    <article className={`feature-row ${isRunning ? "running" : ""}`}>
+    <article className={`feature-row ${isRunning ? "running" : ""}`} aria-label={`${feature.name} 功能行`}>
       <div className="drag-handle" aria-hidden="true">
         <span />
         <span />
@@ -373,7 +384,7 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
       <div className="feature-copy">
         <div className="feature-title-line">
           <h3>{feature.name}</h3>
-          <span className={`run-badge run-${currentRunState}`}>{getRunLabel(currentRunState)}</span>
+          <span className={`run-badge run-${currentRunState}`} aria-live="polite">{getRunLabel(currentRunState)}</span>
         </div>
         <p>{feature.description}</p>
         <p className="feature-summary">{feature.configSummary}</p>
