@@ -55,6 +55,11 @@ type DialogFeature = {
   feature: FeatureDefinition;
 };
 
+type MaaTaskRunResponse = {
+  runState?: RunState;
+};
+
+const DEFAULT_RESOURCE_NAME = "默认";
 const runningStates = new Set<RunState>(["starting", "running", "paused", "stopping"]);
 
 function getFeatureIcon(featureId: string) {
@@ -138,6 +143,53 @@ function App() {
   }
 
   function handleRunChange(gameId: string, featureId: string, runState: RunState) {
+    const currentState = stateRef.current;
+    const game = currentState.games.find((candidate) => candidate.id === gameId);
+    const feature = game?.features.find((candidate) => candidate.id === featureId);
+
+    if (!game || !feature) return;
+
+    if (runState === "running") {
+      setState((current) => setFeatureRunState(current, gameId, featureId, "running"));
+      void invoke<MaaTaskRunResponse>("start_maa_task", {
+        request: {
+          gameId,
+          featureId,
+          taskName: feature.name,
+          controllerName: game.controller?.controllerType ?? "",
+          targetWindow: game.controller?.targetWindow ?? "",
+          resourceName: DEFAULT_RESOURCE_NAME,
+          optionKeys: feature.optionKeys ?? [],
+          optionValues: feature.optionValues ?? {},
+          optionDefinitions: nteOptions,
+          globalOptionKey: globalSettingsOption.key,
+          globalSettingsValues: currentState.settingsValues
+        }
+      })
+        .then((response) => {
+          const nextRunState = response?.runState ?? "running";
+          setState((current) => setFeatureRunState(current, gameId, featureId, nextRunState));
+        })
+        .catch((error) => {
+          console.error("Failed to start Maa task", error);
+          setState((current) => setFeatureRunState(current, gameId, featureId, "failed"));
+        });
+      return;
+    }
+
+    if (runState === "idle") {
+      setState((current) => setFeatureRunState(current, gameId, featureId, "stopping"));
+      void invoke<MaaTaskRunResponse>("stop_maa_task", { gameId, featureId })
+        .then((response) => {
+          setState((current) => setFeatureRunState(current, gameId, featureId, response?.runState ?? "idle"));
+        })
+        .catch((error) => {
+          console.error("Failed to stop Maa task", error);
+          setState((current) => setFeatureRunState(current, gameId, featureId, "failed"));
+        });
+      return;
+    }
+
     setState((current) => setFeatureRunState(current, gameId, featureId, runState));
   }
 

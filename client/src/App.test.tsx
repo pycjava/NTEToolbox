@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
@@ -124,5 +124,57 @@ describe("App", () => {
         })
       })
     }));
+  });
+
+  it("starts and stops a feature through the Maa execution bridge", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "load_client_config") return Promise.resolve(null);
+      if (command === "start_maa_task") return Promise.resolve({ runState: "running" });
+      if (command === "stop_maa_task") return Promise.resolve({ runState: "idle" });
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    const fishRow = screen.getByRole("article", { name: /钓鱼/ });
+    fireEvent.click(within(fishRow).getByRole("button", { name: "启动" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("start_maa_task", {
+        request: expect.objectContaining({
+          gameId: "nte",
+          featureId: "fish",
+          taskName: "钓鱼",
+          controllerName: "Win PostMessage (默认)",
+          resourceName: "默认",
+          optionKeys: [
+            "钓鱼终止时间开关",
+            "溜鱼设置",
+            "卖鱼买换饵开关",
+            "卖鱼买换饵设置"
+          ],
+          optionValues: expect.objectContaining({
+            "钓鱼终止时间开关": false,
+            "买饵次数": "4"
+          }),
+          globalOptionKey: "全局设置",
+          globalSettingsValues: expect.objectContaining({
+            debug_mode_switch: "0",
+            logging_switch: "1"
+          })
+        })
+      });
+    });
+    expect(within(fishRow).getByText("运行中")).toBeTruthy();
+
+    fireEvent.click(within(fishRow).getByRole("button", { name: "停止" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("stop_maa_task", {
+        gameId: "nte",
+        featureId: "fish"
+      });
+    });
+    expect(within(fishRow).getByText("就绪")).toBeTruthy();
   });
 });

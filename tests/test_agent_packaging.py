@@ -137,6 +137,50 @@ class AgentPackagingTest(unittest.TestCase):
         self.assertNotIn("--collect-all=maaagentbinary", args)
         self.assertIn(str(ROOT / "tools" / "agent_entry.py"), args)
 
+    def test_tauri_config_bundles_prepared_maa_runtime_resources(self):
+        tauri_config = json.loads(
+            (ROOT / "client" / "src-tauri" / "tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            tauri_config["bundle"]["resources"],
+            {
+                "gen/maafw/": "maafw/",
+            },
+        )
+
+    def test_tauri_before_build_prepares_maa_runtime_resources(self):
+        client_package = json.loads(
+            (ROOT / "client" / "package.json").read_text(encoding="utf-8")
+        )
+        tauri_config = json.loads(
+            (ROOT / "client" / "src-tauri" / "tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            client_package["scripts"]["prepare:maafw"],
+            "node scripts/prepare-maafw.mjs",
+        )
+        self.assertIn(
+            "pnpm prepare:maafw",
+            tauri_config["build"]["beforeBuildCommand"],
+        )
+        self.assertTrue((ROOT / "client" / "scripts" / "prepare-maafw.mjs").is_file())
+
+    def test_tauri_build_script_builds_agent_for_standalone_runtime(self):
+        script = (ROOT / "tools" / "build_tauri.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('Join-Path $repoRoot "dist\\agent.exe"', script)
+        self.assertIn(
+            'Invoke-Step "python" @("-m", "pip", "install", "-e", ".", "pyinstaller")',
+            script,
+        )
+        self.assertIn('Invoke-Step "python" @(".\\tools\\build_agent.py")', script)
+
     def test_install_agent_copies_windows_exe(self):
         install = load_tool_module("install", ROOT / "tools" / "install.py")
 
