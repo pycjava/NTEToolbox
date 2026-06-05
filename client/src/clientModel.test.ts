@@ -116,6 +116,11 @@ const assistOptionDefinitions: Record<string, OptionDefinition> = {
   }
 };
 
+const globalSettingsDefaultValues = {
+  debug_mode_switch: "0",
+  logging_switch: "1"
+};
+
 const games: GameDefinition[] = [
   {
     id: "nte",
@@ -128,21 +133,43 @@ const games: GameDefinition[] = [
         name: "钓鱼",
         description: "自动钓鱼、溜鱼、卖鱼买饵",
         configSummary: "",
-        optionKeys: ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"]
+        optionKeys: ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"],
+        optionValues: {
+          "钓鱼终止时间开关": true,
+          "钓鱼终止时长": "2小时",
+          "溜鱼_midpoint_pix_range": "5",
+          "溜鱼_midpoint_sleep_time": "5",
+          "卖鱼买换饵开关": true,
+          "买饵次数": "4"
+        }
       },
       {
         id: "piano",
         name: "弹钢琴",
         description: "MIDI 文件、键盘输入模式",
         configSummary: "",
-        optionKeys: ["弹钢琴_keybord_设置"]
+        optionKeys: ["弹钢琴_keybord_设置"],
+        optionValues: {
+          midi_path: "",
+          bpm: "",
+          piano_mode: "36",
+          timeout_mode: "速率不变",
+          use_custom_winapi: "1"
+        }
       },
       {
         id: "assist",
         name: "实时辅助",
         description: "自动拾取、S 级鱼截图",
         configSummary: "",
-        optionKeys: ["实时辅助_自动拾取", "实时辅助_S级鱼截图"]
+        optionKeys: ["实时辅助_自动拾取", "实时辅助_S级鱼截图"],
+        optionValues: {
+          "实时辅助_自动拾取": true,
+          "实时辅助_自动拾取_永远拾取": false,
+          "实时辅助_S级鱼截图": true,
+          "S级鱼截图保存目录": "screenshots/s_fish",
+          "S级鱼截图冷却时间": "5"
+        }
       }
     ]
   },
@@ -155,9 +182,13 @@ const games: GameDefinition[] = [
   }
 ];
 
+function buildState() {
+  return buildInitialClientState(games, globalSettingsDefaultValues);
+}
+
 describe("client model", () => {
   it("defaults to the first game when no selection exists", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
 
     expect(state.selectedGameId).toBe("nte");
     expect(state.games[0].features).toHaveLength(3);
@@ -168,7 +199,7 @@ describe("client model", () => {
   });
 
   it("saves global settings values in client state", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setGlobalSettingsValues(state, { debug_mode_switch: "1" });
 
     expect(next.settingsValues).toMatchObject({
@@ -178,21 +209,21 @@ describe("client model", () => {
   });
 
   it("selects a game from the top icon switcher", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = selectGame(state, "future");
 
     expect(next.selectedGameId).toBe("future");
   });
 
   it("updates the visible feature configuration summary", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureConfig(state, "nte", "fish", "终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
 
     expect(next.games[0].features[0].configSummary).toBe("终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
   });
 
   it("marks only the selected feature as running", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureRunState(state, "nte", "fish", "running");
 
     expect(next.games[0].features[0].runState).toBe("running");
@@ -200,7 +231,7 @@ describe("client model", () => {
   });
 
   it("adds a local game and selects it for the icon switcher", () => {
-    const state = setGlobalSettingsValues(buildInitialClientState(games), { debug_mode_switch: "1" });
+    const state = setGlobalSettingsValues(buildState(), { debug_mode_switch: "1" });
     const next = addGame(state, {
       id: "new-game",
       name: "新游戏",
@@ -215,7 +246,7 @@ describe("client model", () => {
   });
 
   it("initializes fishing options with screenshot defaults", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const fish = state.games[0].features[0];
 
     expect(fish.optionValues).toMatchObject({
@@ -230,7 +261,7 @@ describe("client model", () => {
   });
 
   it("updates fishing duration in option values and summary", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼终止时长", "4小时");
     const fish = next.games[0].features[0];
 
@@ -239,7 +270,7 @@ describe("client model", () => {
   });
 
   it("hides fishing duration when end time is disabled", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼终止时间开关", false);
     const fish = next.games[0].features[0];
 
@@ -248,7 +279,7 @@ describe("client model", () => {
   });
 
   it("saves fishing midpoint inputs", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureOptionValue(
       setFeatureOptionValue(state, "nte", "fish", "溜鱼_midpoint_pix_range", "8"),
       "nte",
@@ -263,14 +294,14 @@ describe("client model", () => {
   });
 
   it("updates summary when auto bait is disabled", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureOptionValue(state, "nte", "fish", "卖鱼买换饵开关", false);
 
     expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 关闭 · 买饵 4次");
   });
 
   it("initializes piano keyboard input options", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const piano = state.games[0].features[1];
 
     expect(piano.optionValues).toMatchObject({
@@ -284,7 +315,7 @@ describe("client model", () => {
   });
 
   it("updates piano summary when a MIDI path is selected", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const next = setFeatureOptionValue(state, "nte", "piano", "midi_path", "D:\\songs\\theme.mid");
     const piano = next.games[0].features[1];
 
@@ -293,7 +324,7 @@ describe("client model", () => {
   });
 
   it("initializes realtime assist options", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const assist = state.games[0].features[2];
 
     expect(assist.optionValues).toMatchObject({
@@ -307,7 +338,7 @@ describe("client model", () => {
   });
 
   it("hides realtime assist dependent settings when their switches are disabled", () => {
-    const state = buildInitialClientState(games);
+    const state = buildState();
     const withoutPickup = setFeatureOptionValue(state, "nte", "assist", "实时辅助_自动拾取", false);
     const withoutScreenshot = setFeatureOptionValue(withoutPickup, "nte", "assist", "实时辅助_S级鱼截图", false);
     const assist = withoutScreenshot.games[0].features[2];

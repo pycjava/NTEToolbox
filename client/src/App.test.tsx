@@ -18,9 +18,9 @@ describe("App", () => {
   it("opens piano configuration with keyboard input fields", () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "编辑弹钢琴" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑弹钢琴 (键盘输入)" }));
 
-    const dialog = screen.getByRole("dialog", { name: "弹钢琴" });
+    const dialog = screen.getByRole("dialog", { name: "弹钢琴 (键盘输入)" });
     expect(within(dialog).getByText("MIDI 文件路径")).toBeTruthy();
     expect(within(dialog).getByText("默认 BPM")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("36")).toBeTruthy();
