@@ -1,213 +1,337 @@
-import type { GameDefinition, OptionDefinition } from "./clientModel";
+import interfaceJsonc from "../../assets/interface.jsonc?raw";
 
-export const globalSettingsOption: OptionDefinition = {
-  key: "全局设置",
-  type: "input",
-  label: "全局设置",
-  inputs: [
-    {
-      name: "debug_mode_switch",
-      label: "debug 模式开关 (`1` 为开 `0` 为关)",
-      pipelineType: "int",
-      defaultValue: "0"
-    },
-    {
-      name: "logging_switch",
-      label: "日志开关 (`1` 为开 `0` 为关)",
-      description: "关闭后 debug 目录不再写入 maafw 运行时日志。本阶段只保存客户端配置值",
-      pipelineType: "int",
-      defaultValue: "1"
-    }
-  ]
+import type {
+  GameDefinition,
+  InputOptionDefinition,
+  OptionDefinition,
+  OptionInputDefinition,
+  OptionValue
+} from "./clientModel";
+
+type MaaInterfaceConfig = {
+  name?: string;
+  description?: string;
+  controller?: MaaControllerDefinition[];
+  task?: MaaTaskDefinition[];
+  option?: Record<string, MaaOptionDefinition>;
 };
 
-export const nteOptions: Record<string, OptionDefinition> = {
-  "钓鱼终止时间开关": {
-    key: "钓鱼终止时间开关",
-    type: "switch",
-    label: "终止时间",
-    description: "启用后可通过下拉列表选择钓鱼持续时长；到达时间后终止该节点",
-    defaultValue: true,
-    enabledOptionKeys: ["钓鱼终止时长"]
+type MaaControllerDefinition = {
+  name: string;
+  type?: string;
+};
+
+type MaaTaskDefinition = {
+  name: string;
+  entry?: string;
+  option?: string[];
+};
+
+type MaaOptionDefinition = {
+  type: "switch" | "select" | "input";
+  label?: string;
+  description?: string;
+  inputs?: MaaInputDefinition[];
+  cases?: MaaCaseDefinition[];
+  default_case?: string;
+};
+
+type MaaCaseDefinition = {
+  name: string;
+  label?: string;
+  description?: string;
+  option?: string[];
+};
+
+type MaaInputDefinition = {
+  name: string;
+  label?: string;
+  description?: string;
+  pipeline_type?: "int" | "string" | "bool";
+  default?: string;
+};
+
+export type ClientData = {
+  globalSettingsOption: InputOptionDefinition;
+  globalSettingsDefaultValues: Record<string, OptionValue>;
+  nteOptions: Record<string, OptionDefinition>;
+  initialGames: GameDefinition[];
+};
+
+const GLOBAL_SETTINGS_TASK_NAME = "全局设置";
+const DEFAULT_GAME_ID = "nte";
+const DEFAULT_GAME_NAME = "异环 NTE";
+const DEFAULT_GAME_SHORT_NAME = "异";
+const DEFAULT_GAME_ICON = "/nte-icon.png";
+const FALLBACK_CONTROLLER_WINDOWS = ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"];
+
+const defaultGlobalSettingsOption: InputOptionDefinition = {
+  key: GLOBAL_SETTINGS_TASK_NAME,
+  type: "input",
+  label: GLOBAL_SETTINGS_TASK_NAME,
+  inputs: []
+};
+
+const featureMetadataByEntry: Record<string, Pick<GameDefinition["features"][number], "id" | "description">> = {
+  钓鱼: {
+    id: "fish",
+    description: "自动钓鱼、溜鱼、卖鱼买饵"
   },
-  "钓鱼终止时长": {
-    key: "钓鱼终止时长",
-    type: "select",
-    label: "钓鱼时长",
-    defaultValue: "2小时",
-    cases: ["30分钟", "1小时", "2小时", "3小时", "4小时", "6小时", "8小时", "12小时"]
+  弹钢琴_keybord: {
+    id: "piano",
+    description: "MIDI 文件、键盘输入模式"
   },
-  "溜鱼设置": {
-    key: "溜鱼设置",
-    type: "input",
-    label: "溜鱼设置",
-    inputs: [
-      {
-        name: "溜鱼_midpoint_pix_range",
-        label: "溜鱼中点停顿范围 (pix)",
-        pipelineType: "int",
-        defaultValue: "5"
-      },
-      {
-        name: "溜鱼_midpoint_sleep_time",
-        label: "溜鱼中点停顿时间 (ms)",
-        pipelineType: "int",
-        defaultValue: "5"
-      }
-    ]
-  },
-  "卖鱼买换饵开关": {
-    key: "卖鱼买换饵开关",
-    type: "switch",
-    label: "自动卖鱼买换饵 (抢占鼠标)",
-    description: "无饵或满舱时，按顺序执行卖鱼、买饵、换饵。由于涉及点击操作，会抢占鼠标",
-    defaultValue: true
-  },
-  "卖鱼买换饵设置": {
-    key: "卖鱼买换饵设置",
-    type: "input",
-    label: "卖鱼买换饵设置",
-    inputs: [
-      {
-        name: "买饵次数",
-        label: "买饵次数",
-        description: "次数 n 代表买 n * 99 个饵",
-        pipelineType: "int",
-        defaultValue: "4"
-      }
-    ]
-  },
-  "弹钢琴_keybord_设置": {
-    key: "弹钢琴_keybord_设置",
-    type: "input",
-    label: "弹钢琴设置",
-    inputs: [
-      {
-        name: "midi_path",
-        label: "MIDI 文件路径",
-        pipelineType: "string",
-        defaultValue: ""
-      },
-      {
-        name: "bpm",
-        label: "默认 BPM",
-        pipelineType: "string",
-        defaultValue: ""
-      },
-      {
-        name: "piano_mode",
-        label: "钢琴模式 (只能填 `21` 或 `36`)",
-        pipelineType: "string",
-        defaultValue: "36"
-      },
-      {
-        name: "timeout_mode",
-        label: "超时模式 (只能填 `同步时轴` 或 `速率不变`)",
-        pipelineType: "string",
-        defaultValue: "速率不变"
-      },
-      {
-        name: "use_custom_winapi",
-        label: "使用自定义的 WinAPI (`1` 为开 `0` 为关)",
-        description: "使用自定义的 WinAPI 代替 maafw 的键盘输入 API，以解决输入延迟问题。会导致指针光标闪烁但不会抢占鼠标",
-        pipelineType: "int",
-        defaultValue: "1"
-      }
-    ]
-  },
-  "实时辅助_自动拾取": {
-    key: "实时辅助_自动拾取",
-    type: "switch",
-    label: "自动拾取",
-    description: "自动按 F 键拾取。自动判断画面内容决定是否拾取",
-    defaultValue: true,
-    enabledOptionKeys: ["实时辅助_自动拾取_永远拾取"]
-  },
-  "实时辅助_自动拾取_永远拾取": {
-    key: "实时辅助_自动拾取_永远拾取",
-    type: "switch",
-    label: "自动拾取 - 永远拾取",
-    description: "永远拾取，不判断画面内容。按住 F 时关闭自动拾取。适合粉爪等场景，仅在启用自动拾取时有效",
-    defaultValue: false
-  },
-  "实时辅助_S级鱼截图": {
-    key: "实时辅助_S级鱼截图",
-    type: "switch",
-    label: "S级鱼截图",
-    description: "识别到金色背景光和 S 图标时，自动保存当前截图",
-    defaultValue: true,
-    enabledOptionKeys: ["实时辅助_S级鱼截图_设置"]
-  },
-  "实时辅助_S级鱼截图_设置": {
-    key: "实时辅助_S级鱼截图_设置",
-    type: "input",
-    label: "",
-    inputs: [
-      {
-        name: "S级鱼截图保存目录",
-        label: "S级鱼截图保存目录",
-        pipelineType: "string",
-        defaultValue: "screenshots/s_fish"
-      },
-      {
-        name: "S级鱼截图冷却时间",
-        label: "S级鱼截图冷却时间 (秒)",
-        pipelineType: "int",
-        defaultValue: "5"
-      }
-    ]
+  实时辅助: {
+    id: "assist",
+    description: "自动拾取、S 级鱼截图"
   }
 };
 
-export const initialGames: GameDefinition[] = [
-  {
-    id: "nte",
-    name: "异环 NTE",
-    shortName: "异",
-    icon: "./src/assets/nte-icon.png",
+const parsedInterface = parseJsonc(interfaceJsonc);
+const clientData = buildClientDataFromInterface(parsedInterface);
+
+export const globalSettingsOption = clientData.globalSettingsOption;
+export const globalSettingsDefaultValues = clientData.globalSettingsDefaultValues;
+export const nteOptions = clientData.nteOptions;
+export const initialGames = clientData.initialGames;
+
+export function parseJsonc(text: string): MaaInterfaceConfig {
+  return JSON.parse(stripJsoncComments(text)) as MaaInterfaceConfig;
+}
+
+export function buildClientDataFromInterface(config: MaaInterfaceConfig): ClientData {
+  const optionDefinitions = buildOptionDefinitions(config.option ?? {});
+  const globalSettingsOption = getGlobalSettingsOption(config, optionDefinitions);
+  const globalSettingsDefaultValues = buildInputDefaultValues(globalSettingsOption);
+  const featureTasks = (config.task ?? []).filter((task) => task.name !== GLOBAL_SETTINGS_TASK_NAME);
+  const controllerNames = (config.controller ?? []).map((controller) => controller.name).filter(Boolean);
+  const defaultControllerName = controllerNames[0] ?? "";
+
+  const features = featureTasks.map((task, index) => {
+    const entry = task.entry ?? task.name;
+    const metadata = featureMetadataByEntry[entry];
+    const optionKeys = task.option ?? [];
+
+    return {
+      id: metadata?.id ?? toStableId(entry, index),
+      name: task.name,
+      description: metadata?.description ?? optionKeys.join(" / "),
+      configSummary: "",
+      optionKeys,
+      optionValues: buildDefaultOptionValues(optionKeys, optionDefinitions)
+    };
+  });
+
+  const game: GameDefinition = {
+    id: DEFAULT_GAME_ID,
+    name: DEFAULT_GAME_NAME,
+    shortName: DEFAULT_GAME_SHORT_NAME,
+    icon: DEFAULT_GAME_ICON,
     status: "ready",
     controller: {
-      controllerType: "Win PostMessageWithWindowPos",
+      controllerType: defaultControllerName,
+      controllerTypes: controllerNames,
       targetWindow: "",
-      availableWindows: ["异环 - NTE", "模拟器窗口 1", "模拟器窗口 2"],
+      availableWindows: FALLBACK_CONTROLLER_WINDOWS,
       connected: false
     },
-    features: [
+    features
+  };
+
+  return {
+    globalSettingsOption,
+    globalSettingsDefaultValues,
+    nteOptions: optionDefinitions,
+    initialGames: [
+      game,
       {
-        id: "fish",
-        name: "钓鱼",
-        description: "自动钓鱼、溜鱼、卖鱼买饵",
-        configSummary: "",
-        optionKeys: ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"]
+        id: "future-a",
+        name: "预留游戏",
+        shortName: "预",
+        status: "placeholder",
+        features: []
       },
       {
-        id: "piano",
-        name: "弹钢琴",
-        description: "MIDI 文件、键盘输入模式",
-        configSummary: "",
-        optionKeys: ["弹钢琴_keybord_设置"]
-      },
-      {
-        id: "assist",
-        name: "实时辅助",
-        description: "自动拾取、S 级鱼截图",
-        configSummary: "",
-        optionKeys: ["实时辅助_自动拾取", "实时辅助_S级鱼截图"]
+        id: "future-b",
+        name: "更多游戏",
+        shortName: "多",
+        status: "placeholder",
+        features: []
       }
     ]
-  },
-  {
-    id: "future-a",
-    name: "预留游戏",
-    shortName: "预",
-    status: "placeholder",
-    features: []
-  },
-  {
-    id: "future-b",
-    name: "更多游戏",
-    shortName: "多",
-    status: "placeholder",
-    features: []
+  };
+}
+
+function stripJsoncComments(text: string): string {
+  let result = "";
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (inString) {
+      result += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"" || char === "'") {
+      inString = true;
+      quote = char;
+      result += char;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      while (index < text.length && text[index] !== "\n") index += 1;
+      result += "\n";
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) index += 1;
+      index += 1;
+      continue;
+    }
+
+    result += char;
   }
-];
+
+  return result;
+}
+
+function buildOptionDefinitions(maaOptions: Record<string, MaaOptionDefinition>): Record<string, OptionDefinition> {
+  const optionDefinitions: Record<string, OptionDefinition> = {};
+
+  for (const [key, option] of Object.entries(maaOptions)) {
+    if (option.type === "switch") {
+      optionDefinitions[key] = {
+        key,
+        type: "switch",
+        label: option.label ?? key,
+        description: option.description,
+        defaultValue: option.default_case === "Yes",
+        enabledOptionKeys: option.cases?.flatMap((caseDefinition) => caseDefinition.option ?? [])
+      };
+      continue;
+    }
+
+    if (option.type === "select") {
+      const cases = option.cases?.map((caseDefinition) => caseDefinition.label ?? caseDefinition.name) ?? [];
+      optionDefinitions[key] = {
+        key,
+        type: "select",
+        label: option.label ?? key,
+        description: option.description,
+        defaultValue: option.default_case ?? cases[0] ?? "",
+        cases
+      };
+      continue;
+    }
+
+    optionDefinitions[key] = {
+      key,
+      type: "input",
+      label: option.label ?? key,
+      description: option.description,
+      inputs: (option.inputs ?? []).map(toInputDefinition)
+    };
+  }
+
+  return optionDefinitions;
+}
+
+function toInputDefinition(input: MaaInputDefinition): OptionInputDefinition {
+  return {
+    name: input.name,
+    label: input.label ?? input.name,
+    description: input.description,
+    pipelineType: input.pipeline_type === "int" ? "int" : "string",
+    defaultValue: input.default ?? ""
+  };
+}
+
+function getGlobalSettingsOption(
+  config: MaaInterfaceConfig,
+  optionDefinitions: Record<string, OptionDefinition>
+): InputOptionDefinition {
+  const globalTask = config.task?.find((task) => task.name === GLOBAL_SETTINGS_TASK_NAME);
+  const globalOptionKey = globalTask?.option?.[0] ?? GLOBAL_SETTINGS_TASK_NAME;
+  const optionDefinition = optionDefinitions[globalOptionKey];
+
+  return optionDefinition?.type === "input" ? optionDefinition : defaultGlobalSettingsOption;
+}
+
+function buildInputDefaultValues(optionDefinition: InputOptionDefinition): Record<string, OptionValue> {
+  const values: Record<string, OptionValue> = {};
+
+  for (const input of optionDefinition.inputs) {
+    values[input.name] = input.defaultValue;
+  }
+
+  return values;
+}
+
+function buildDefaultOptionValues(
+  optionKeys: string[],
+  optionDefinitions: Record<string, OptionDefinition>
+): Record<string, OptionValue> {
+  const values: Record<string, OptionValue> = {};
+  const visited = new Set<string>();
+
+  for (const optionKey of optionKeys) {
+    addDefaultOptionValue(optionKey, optionDefinitions, values, visited);
+  }
+
+  return values;
+}
+
+function addDefaultOptionValue(
+  optionKey: string,
+  optionDefinitions: Record<string, OptionDefinition>,
+  values: Record<string, OptionValue>,
+  visited: Set<string>
+) {
+  if (visited.has(optionKey)) return;
+  visited.add(optionKey);
+
+  const optionDefinition = optionDefinitions[optionKey];
+  if (!optionDefinition) return;
+
+  if (optionDefinition.type === "switch") {
+    values[optionDefinition.key] = optionDefinition.defaultValue;
+    for (const childOptionKey of optionDefinition.enabledOptionKeys ?? []) {
+      addDefaultOptionValue(childOptionKey, optionDefinitions, values, visited);
+    }
+    return;
+  }
+
+  if (optionDefinition.type === "select") {
+    values[optionDefinition.key] = optionDefinition.defaultValue;
+    return;
+  }
+
+  for (const input of optionDefinition.inputs) {
+    values[input.name] = input.defaultValue;
+  }
+}
+
+function toStableId(value: string, index: number): string {
+  const asciiId = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return asciiId || `feature-${index + 1}`;
+}

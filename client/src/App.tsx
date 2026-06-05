@@ -18,7 +18,12 @@ import {
   Upload
 } from "lucide-react";
 
-import { globalSettingsOption, initialGames, nteOptions } from "./clientData";
+import {
+  globalSettingsDefaultValues,
+  globalSettingsOption,
+  initialGames,
+  nteOptions
+} from "./clientData";
 import {
   buildInitialClientState,
   getVisibleOptionKeys,
@@ -80,7 +85,9 @@ function getGameSubtitle(game: GameDefinition) {
 }
 
 function App() {
-  const [state, setState] = useState<ClientState>(() => buildInitialClientState(initialGames));
+  const [state, setState] = useState<ClientState>(() =>
+    buildInitialClientState(initialGames, globalSettingsDefaultValues)
+  );
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"features" | "liveview">("features");
@@ -127,7 +134,7 @@ function App() {
       <header className="top-bar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            <img src="./src/assets/nte-icon.png" alt="" />
+            <img src="/nte-icon.png" alt="" />
           </div>
           <div>
             <h1>MaaToolbox</h1>
@@ -194,6 +201,7 @@ function App() {
 
       {configTarget ? (
         <FeatureConfigDialog
+          optionDefinitions={nteOptions}
           target={configTarget}
           onClose={() => setConfigTarget(null)}
           onSave={handleSaveFeatureConfig}
@@ -219,9 +227,9 @@ type ConnectionBarProps = {
   onRefreshWindows: (gameId: string) => void;
 };
 
-const controllerTypes = ["Win PostMessageWithWindowPos", "Win SendMessage", "ADB Input"];
-
 function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWindowChange, onRefreshWindows }: ConnectionBarProps) {
+  const controllerTypes = controller.controllerTypes?.length ? controller.controllerTypes : [controller.controllerType];
+
   return (
     <div className="connection-bar">
       <div className="connection-row">
@@ -400,14 +408,14 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
 }
 
 type FeatureConfigDialogProps = {
+  optionDefinitions: Record<string, OptionDefinition>;
   target: DialogFeature;
   onClose: () => void;
   onSave: (gameId: string, featureId: string, values: Record<string, OptionValue>) => void;
 };
 
-function FeatureConfigDialog({ target, onClose, onSave }: FeatureConfigDialogProps) {
+function FeatureConfigDialog({ optionDefinitions, target, onClose, onSave }: FeatureConfigDialogProps) {
   const [values, setValues] = useState<Record<string, OptionValue>>(() => ({ ...(target.feature.optionValues ?? {}) }));
-  const optionDefinitions = target.feature.optionKeys?.length ? nteOptions : {};
   const visibleOptionKeys = getVisibleOptionKeys(target.feature.optionKeys ?? [], optionDefinitions, values);
 
   function updateValue(name: string, value: OptionValue) {

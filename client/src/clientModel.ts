@@ -54,6 +54,8 @@ export type FeatureDefinition = {
 export type ControllerState = {
   /** 控制器类型，如 "Win PostMessageWithWindowPos" */
   controllerType: string;
+  /** interface.jsonc 中声明的可选控制器类型 */
+  controllerTypes?: string[];
   /** 当前选中的窗口标识（窗口标题或 hwnd） */
   targetWindow: string;
   /** 可选窗口列表 */
@@ -78,44 +80,8 @@ export type ClientState = {
   settingsValues: Record<string, OptionValue>;
 };
 
-const fishingDefaultValues: Record<string, OptionValue> = {
-  "钓鱼终止时间开关": true,
-  "钓鱼终止时长": "2小时",
-  "溜鱼_midpoint_pix_range": "5",
-  "溜鱼_midpoint_sleep_time": "5",
-  "卖鱼买换饵开关": true,
-  "买饵次数": "4"
-};
-
-const pianoDefaultValues: Record<string, OptionValue> = {
-  midi_path: "",
-  bpm: "",
-  piano_mode: "36",
-  timeout_mode: "速率不变",
-  use_custom_winapi: "1"
-};
-
-const assistDefaultValues: Record<string, OptionValue> = {
-  "实时辅助_自动拾取": true,
-  "实时辅助_自动拾取_永远拾取": false,
-  "实时辅助_S级鱼截图": true,
-  "S级鱼截图保存目录": "screenshots/s_fish",
-  "S级鱼截图冷却时间": "5"
-};
-
-const featureDefaultValuesById: Record<string, Record<string, OptionValue>> = {
-  fish: fishingDefaultValues,
-  piano: pianoDefaultValues,
-  assist: assistDefaultValues
-};
-
-const globalSettingsDefaultValues: Record<string, OptionValue> = {
-  debug_mode_switch: "0",
-  logging_switch: "1"
-};
-
 export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
-  const values = { ...(featureDefaultValuesById[feature.id] ?? {}), ...feature.optionValues };
+  const values = { ...feature.optionValues };
 
   if (feature.id === "fish") {
     return buildFishingConfigSummary(values);
@@ -171,13 +137,9 @@ function buildAssistConfigSummary(values: Record<string, OptionValue>): string {
 }
 
 function withDefaultRunState(feature: FeatureDefinition): FeatureDefinition {
-  const defaultOptionValues = featureDefaultValuesById[feature.id];
-  const optionValues = defaultOptionValues
-    ? { ...defaultOptionValues, ...feature.optionValues }
-    : feature.optionValues;
   const normalizedFeature = {
     ...feature,
-    optionValues,
+    optionValues: { ...(feature.optionValues ?? {}) },
     runState: feature.runState ?? "idle"
   };
 
@@ -194,13 +156,16 @@ function cloneGames(games: GameDefinition[]): GameDefinition[] {
   }));
 }
 
-export function buildInitialClientState(games: GameDefinition[]): ClientState {
+export function buildInitialClientState(
+  games: GameDefinition[],
+  settingsValues: Record<string, OptionValue> = {}
+): ClientState {
   const clonedGames = cloneGames(games);
 
   return {
     selectedGameId: clonedGames[0]?.id ?? "",
     games: clonedGames,
-    settingsValues: { ...globalSettingsDefaultValues }
+    settingsValues: { ...settingsValues }
   };
 }
 

@@ -63,7 +63,12 @@
 
 ### GUI
 
-目前会自动打包 MFAA 和 MXU 两种 GUI，觉得哪个好用就用哪个
+提供三种 GUI，按需选择：
+
+* #### MaaToolbox Client（新 UI，推荐）
+
+  基于 Tauri v2 + React 的新一代客户端，界面现代、轻量  
+  在 [Release](https://github.com/op200/NTEToolbox/releases) 中下载 NSIS 或 MSI 安装包
 
 * #### MFAA
 
@@ -106,18 +111,152 @@
 
 ### 拉取
 
-拉取本仓库和子模块:  
+拉取本仓库和子模块:
 `git clone --recursive https://github.com/op200/NTEToolbox.git`
 
-更新子模块（若有需要）:  
+更新子模块（若有需要）:
 `git submodule update --init --recursive`
 
 *子模块为 `MaaCommonAssets`，内含 OCR 模型文件*
 
 ### 依赖
 
-安装 Python 依赖:  
+安装 Python 依赖:
 使用任意包管理器安装 `pyproject.toml` 中的依赖
 
-复制 OCR 依赖:  
+复制 OCR 依赖:
 执行 `tools/configure.py` 文件
+
+### MaaToolbox Client（新 UI）开发与构建
+
+基于 [Tauri v2](https://v2.tauri.app/) + React 18 + TypeScript + Vite 的桌面客户端。
+
+#### 环境要求
+
+| 工具 | 版本 | 说明 |
+|------|------|------|
+| [Node.js](https://nodejs.org/) | ≥ 18 | 前端运行时 |
+| [pnpm](https://pnpm.io/) | ≥ 8 | 包管理器 |
+| [Rust](https://rustup.rs/) | ≥ 1.77 | Rust 编译器，需安装 `x86_64-pc-windows-gnu` 工具链 |
+| [MinGW-w64](https://winlibs.com/) | — | GNU C 工具链（gcc、ld、dlltool），提供链接器 |
+
+#### 环境搭建
+
+```bash
+# 1. 安装 Rust GNU 工具链
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
+
+# 2. 安装 MinGW（提供 gcc/ld/dlltool）
+#    方式一：通过 winget
+winget install BrechtSanders.WinLibs.POSIX.UCRT
+#    方式二：从 https://winlibs.com/ 下载，解压后将 bin 目录加入 PATH
+
+# 3. 安装前端依赖
+cd client
+pnpm install
+```
+
+#### 开发模式
+
+```bash
+cd client
+pnpm tauri dev
+```
+
+启动 Vite 开发服务器（热更新）和 Rust 后端（自动重编译）。
+
+#### 构建发布包
+
+```bash
+cd client
+
+# 构建 Debug 版本（快速，用于调试）
+pnpm tauri build --debug
+
+# 构建 Release 版本（优化体积和性能）
+pnpm tauri build
+```
+
+构建产出物：
+
+| 产出 | 路径 |
+|------|------|
+| 可执行文件 | `client/src-tauri/target/debug/ntetoolbox-client.exe`（debug）或 `target/release/` |
+| NSIS 安装包 | `client/src-tauri/target/{debug\|release}/bundle/nsis/MaaToolbox Client_*_x64-setup.exe` |
+| MSI 安装包 | `client/src-tauri/target/{debug\|release}/bundle/msi/MaaToolbox Client_*_x64_en-US.msi` |
+
+#### 前端测试
+
+```bash
+cd client
+pnpm test
+```
+
+#### 注意事项
+
+- 确保 MinGW 的 `bin` 目录在系统 PATH 中，否则 Rust 编译链接会失败
+- 构建 Release 版本时间较长（首次约 10+ 分钟），后续增量编译只需几十秒
+- 静态资源（图片等）请放在 `client/public/` 目录，Vite 会原样复制到构建产物中
+
+### 完整打包流程
+
+本项目打包分为三部分：**Python Agent**、**GUI 前端**、**安装包**。
+
+#### 1. 打包 Python Agent
+
+依赖 [PyInstaller](https://pyinstaller.org/)，将 Python 自动化脚本打包为独立 `agent.exe`：
+
+```bash
+# 在项目根目录
+pip install -e . pyinstaller
+python tools/build_agent.py
+```
+
+产出物：`dist/agent.exe`
+
+#### 2. 构建 MaaToolbox Client（新 UI）
+
+参见上方「构建发布包」章节。
+
+#### 3. 构建传统 GUI 安装包（MFAA / MXU）
+
+使用 PowerShell 脚本自动化打包：
+
+```powershell
+# 构建 MFAA 版本安装目录
+tools\build_install.ps1 -Gui mfaa -Version 1.0.0
+
+# 或构建 MXU 版本安装目录
+tools\build_install.ps1 -Gui mxu -Version 1.0.0
+```
+
+该脚本会自动：
+1. 验证 `deps\bin`（MaaFramework）存在
+2. 复制 GUI 前端文件
+3. 调用 PyInstaller 打包 `agent.exe`
+4. 执行 `tools\install.py` 组装安装目录
+
+#### 4. 生成 NSIS 安装包
+
+```powershell
+# 将安装目录打包为 NSIS 安装程序
+tools\build_nsis.ps1 -Gui mfaa
+
+# 指定安装目录和输出目录
+tools\build_nsis.ps1 -Gui mfaa -InstallDir .\install -OutputDir .\dist-installer
+```
+
+产出物：`dist-installer/NTEToolbox-MFAA-Setup.exe`
+
+#### 前置依赖汇总
+
+| 依赖 | 用途 | 安装方式 |
+|------|------|----------|
+| Python ≥ 3.14 | Agent 运行时 | [python.org](https://www.python.org/downloads/) |
+| PyInstaller | 打包 agent.exe | `pip install pyinstaller` |
+| MaaFramework | 自动化引擎 | 下载到 `deps\bin` |
+| Node.js + pnpm | 新 UI 前端构建 | [nodejs.org](https://nodejs.org/) |
+| Rust (GNU) + MinGW | 新 UI 后端编译 | [rustup.rs](https://rustup.rs/) + winget |
+| NSIS (makensis) | Windows 安装包 | [nsis.sourceforge.io](https://nsis.sourceforge.io/) |
+| .NET Desktop Runtime | MFAA GUI 运行时 | 安装时自动下载 |
