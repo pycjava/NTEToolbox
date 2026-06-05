@@ -105,185 +105,323 @@
 
   提交 issue 仍需要提交日志，所以遇到 bug 时需要打开日志，最好将 `draw_quality` 设为 `100` 以提交更清晰的报错自动截图
 
-## 开发
+## 开发与编译
 
-以下内容为开发者准备，普通用户不需要操作
+以下内容用于从源码构建项目。当前仓库覆盖最完整、最推荐的编译目标是 **Windows x64 的 MaaToolbox Client（新 UI）**。传统 MFAA / MXU 打包仍可用，但需要额外准备对应 GUI 的已发布文件。
 
-### 拉取
+> [!IMPORTANT]
+> 下方命令默认在 PowerShell 中执行。除非命令里写了 `cd client`，否则都在仓库根目录执行。
 
-拉取本仓库和子模块:
-`git clone --recursive https://github.com/op200/NTEToolbox.git`
+### 1. 获取源码
 
-更新子模块（若有需要）:
-`git submodule update --init --recursive`
+```powershell
+git clone --recursive https://github.com/op200/NTEToolbox.git
+cd NTEToolbox
+git submodule update --init --recursive
+```
 
-*子模块为 `MaaCommonAssets`，内含 OCR 模型文件*
+子模块 `assets/MaaCommonAssets` 内含 OCR 模型。若后续 `tools/configure.py` 报找不到 `assets\MaaCommonAssets\OCR`，先重新执行上面的 `git submodule update --init --recursive`。
 
-### 依赖
+### 2. 安装编译工具
 
-安装 Python 依赖:
-使用任意包管理器安装 `pyproject.toml` 中的依赖
+| 工具 | 建议版本 | 用途 |
+|------|----------|------|
+| [Git](https://git-scm.com/download/win) | 最新稳定版 | 拉取源码和子模块 |
+| [Python](https://www.python.org/downloads/) | >= 3.14 | 运行和打包 Python agent |
+| [Node.js](https://nodejs.org/) | >= 18 | 前端构建运行时 |
+| [pnpm](https://pnpm.io/) | 11.3.0 | 前端包管理器，本仓库已在 `packageManager` 中锁定 |
+| [Rust](https://rustup.rs/) | >= 1.77.2 | Tauri 后端编译 |
+| [WinLibs MinGW-w64](https://winlibs.com/) | POSIX UCRT | 本项目使用 `x86_64-pc-windows-gnu` Rust 工具链链接 |
+| [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | 系统自带或最新版 | Tauri 窗口运行时，Windows 10 1803+ / Windows 11 通常已内置 |
+| [NSIS](https://nsis.sourceforge.io/Download) / WiX Toolset v3 | 可选 | 生成 Windows 安装包时使用 |
 
-复制 OCR 依赖:
-执行 `tools/configure.py` 文件
+安装 pnpm、Rust GNU 工具链和 WinLibs：
 
-### MaaToolbox Client（新 UI）开发与构建
+```powershell
+corepack enable
+corepack prepare pnpm@11.3.0 --activate
 
-基于 [Tauri v2](https://v2.tauri.app/) + React 18 + TypeScript + Vite 的桌面客户端。
-
-#### 环境要求
-
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| [Node.js](https://nodejs.org/) | ≥ 18 | 前端运行时 |
-| [pnpm](https://pnpm.io/) | ≥ 8 | 包管理器 |
-| [Rust](https://rustup.rs/) | ≥ 1.77 | Rust 编译器，需安装 `x86_64-pc-windows-gnu` 工具链 |
-| [MinGW-w64](https://winlibs.com/) | — | GNU C 工具链（gcc、ld、dlltool），提供链接器 |
-
-#### 环境搭建
-
-```bash
-# 1. 安装 Rust GNU 工具链
 rustup toolchain install stable-x86_64-pc-windows-gnu
 rustup default stable-x86_64-pc-windows-gnu
 
-# 2. 安装 MinGW（提供 gcc/ld/dlltool）
-#    方式一：通过 winget
 winget install BrechtSanders.WinLibs.POSIX.UCRT
-#    方式二：从 https://winlibs.com/ 下载，解压后将 bin 目录加入 PATH
-
-# 3. 安装前端依赖
-cd client
-pnpm install
 ```
 
-#### Tauri 初始化与 GNU 工具链修复记录
-
-本次为修复 MaaToolbox Client 的 Tauri 构建环境，已完成以下调整：
-
-1. 执行 `pnpm tauri init --force`，重新生成 Tauri 模板文件，并补齐 `tauri-plugin-log`、`serde`、`serde_json` 等依赖
-2. 恢复被初始化覆盖的项目配置，包括项目名称、应用标识符、窗口尺寸等
-3. 通过 `winget install BrechtSanders.WinLibs.POSIX.UCRT` 安装 WinLibs MinGW，补齐 `gcc`、`ld`、`dlltool` 等 GNU 工具链组件
-4. 将 Rust 默认工具链切换为 GNU：
-
-   ```bash
-   rustup default stable-x86_64-pc-windows-gnu
-   ```
-
-5. 移除 `Cargo.toml` 中的 `cdylib` crate type，仅保留 `staticlib` 和 `rlib`，规避 GNU `ld` 的 `export ordinal too large` 链接错误
-
-> [!WARNING]
-> 每次新开终端都需要确保 MinGW 的 `bin` 目录在 `PATH` 中，否则 Tauri/Rust 构建可能仍会找不到 GNU 链接器。
-
-如果使用 winget 安装 WinLibs，常见路径如下：
+`tools\build_tauri.ps1` 会自动查找 winget 安装的 WinLibs 并临时加入 `PATH`。如果你要手动运行 `pnpm tauri build`，需要确认 `gcc`、`ld`、`dlltool` 可用：
 
 ```powershell
-$env:PATH = "C:\Users\mlamp\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin;$env:PATH"
+gcc --version
+ld --version
+dlltool --version
 ```
 
-也可以将该 `bin` 目录永久加入系统 `PATH`。
+如果命令不存在，将 WinLibs 的 `mingw64\bin` 加入系统 `PATH`，或在当前终端临时加入：
 
-#### 开发模式
+```powershell
+$winlibs = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -Filter "BrechtSanders.WinLibs.POSIX.UCRT*" |
+  Select-Object -First 1 -ExpandProperty FullName
+$env:PATH = "$winlibs\mingw64\bin;$env:PATH"
+```
 
-```bash
+### 3. 准备 MaaFramework
+
+`deps` 目录不会随 Git 仓库提交，需要手动下载 MaaFramework 运行时。
+
+1. 打开 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases/latest)。
+2. 下载 Windows x64 包，文件名通常类似 `MAA-win-x86_64-*.zip`。
+3. 解压到仓库的 `deps` 目录，让目录结构变成 `deps\bin`、`deps\share`、`deps\include` 等。
+
+可用下面命令检查是否放对位置：
+
+```powershell
+Test-Path .\deps\bin\MaaPiCli.exe
+Test-Path .\deps\share\MaaAgentBinary
+```
+
+两个命令都应输出 `True`。如果变成了 `deps\MAA-win-x86_64-xxx\bin`，说明多了一层目录，需要把里面的内容移动到 `deps`。
+
+### 4. 准备 Python 和 OCR 资源
+
+```powershell
+python -m pip install -U pip
+python -m pip install -e . pyinstaller
+python .\tools\configure.py
+```
+
+`tools\configure.py` 会把 `assets\MaaCommonAssets\OCR\ppocr_v4\zh_cn` 复制到 `assets\resource\model\ocr`。这是构建和运行 Maa 资源时需要的 OCR 模型目录。
+
+如果你的系统里有多个 Python 版本，可以把命令改成明确版本：
+
+```powershell
+py -3.14 -m pip install -e . pyinstaller
+py -3.14 .\tools\configure.py
+```
+
+### 5. 安装前端依赖
+
+```powershell
+cd client
+pnpm install --frozen-lockfile
+cd ..
+```
+
+### 6. 一键串联构建脚本
+
+推荐使用顶层编排脚本。它会先构建新 UI，并自动检测 `MFA\MFAAvalonia.exe` / `MXU\mxu.exe`，把可用的传统 GUI 安装目录和 NSIS 安装包也串起来构建：
+
+```powershell
+.\tools\build_all.ps1
+```
+
+常用参数：
+
+```powershell
+# 只构建新 UI，不处理传统 GUI
+.\tools\build_all.ps1 -LegacyGui none
+
+# 只预览将执行哪些构建命令，不真正构建
+.\tools\build_all.ps1 -PlanOnly
+
+# 显式构建 MFAA 安装目录和 NSIS 包
+.\tools\build_all.ps1 -SkipTauri -LegacyGui mfaa -Version v1.0.0
+
+# 同时尝试构建 MFAA 和 MXU；缺任何一个 GUI 源都会直接报错
+.\tools\build_all.ps1 -LegacyGui both -Version v1.0.0
+```
+
+`build_all.ps1` 会按需调用：
+
+- `tools\build_tauri.ps1`
+- `tools\build_install.ps1`
+- `tools\build_nsis.ps1`
+
+如果 `MFA` / `MXU` 目录不存在，默认 `-LegacyGui auto` 会跳过缺失的传统 GUI。若你传入 `-LegacyGui mfaa`、`-LegacyGui mxu` 或 `-LegacyGui both`，缺少对应 GUI exe 会提前失败，避免半路打包出错。
+
+### 7. 只构建新 UI
+
+如果只需要构建 MaaToolbox Client，可直接使用 Tauri 构建脚本：
+
+```powershell
+.\tools\build_tauri.ps1
+```
+
+该脚本会按顺序执行：
+
+1. 查找 WinLibs MinGW，并临时加入 `PATH`
+2. 安装或切换到 `stable-x86_64-pc-windows-gnu`
+3. 设置 `CARGO_TARGET_DIR`，默认使用 `%TEMP%\ntetoolbox-tauri-target`，避免 OneDrive 同步目录影响 Rust 构建
+4. 安装 Python 包并用 PyInstaller 生成 `dist\agent.exe`
+5. 运行 `pnpm tauri build`
+6. 将生成的 exe / NSIS / MSI 产物复制到 `dist-tauri`
+
+默认产物：
+
+| 产物 | 路径 |
+|------|------|
+| 新 UI 可执行文件 | `dist-tauri\MaaToolbox Client.exe` |
+| NSIS 安装包 | `dist-tauri\MaaToolbox Client_*_x64-setup.exe` |
+| MSI 安装包 | `dist-tauri\MaaToolbox Client_*_x64_en-US.msi` |
+
+可以自定义 Rust 产物目录和最终输出目录：
+
+```powershell
+.\tools\build_tauri.ps1 -TargetDir C:\BuildCache\ntetoolbox-tauri-target -OutputDir .\dist-tauri
+```
+
+### 8. 手动构建新 UI
+
+需要排查问题或接入 CI 时，可以拆开执行：
+
+```powershell
+# 仓库根目录：先打包 Python agent
+python .\tools\build_agent.py
+
+# client 目录：构建前端、准备 MaaFramework 运行时、构建 Tauri
+cd client
+pnpm build
+pnpm prepare:maafw
+pnpm tauri build
+```
+
+`pnpm tauri build` 会自动执行 `pnpm build && pnpm prepare:maafw`，所以上面显式写出 `pnpm prepare:maafw` 主要用于提前检查资源是否准备正确。
+
+> [!WARNING]
+> 若没有先生成 `dist\agent.exe`，`pnpm prepare:maafw` 会退回复制 `agent` 源码目录。这样构建出的安装包仍可能依赖用户机器上的 Python 环境，不是完整独立包。发布给普通用户时请使用 `tools\build_tauri.ps1`，或先手动执行 `python .\tools\build_agent.py`。
+
+Tauri 直接构建时，默认产物在：
+
+| 产物 | 路径 |
+|------|------|
+| 可执行文件 | `client\src-tauri\target\release\MaaToolbox Client.exe` |
+| NSIS 安装包 | `client\src-tauri\target\release\bundle\nsis\` |
+| MSI 安装包 | `client\src-tauri\target\release\bundle\msi\` |
+
+### 9. 开发模式
+
+```powershell
 cd client
 pnpm tauri dev
 ```
 
-启动 Vite 开发服务器（热更新）和 Rust 后端（自动重编译）。
+开发模式会启动 Vite 热更新和 Tauri 后端。运行 Maa 任务仍需要提前准备：
 
-#### 构建发布包
+- `deps\bin\MaaPiCli.exe`
+- `assets\resource`
+- Python 依赖：`python -m pip install -e .`
+- OCR 模型：`python .\tools\configure.py`
 
-```bash
-cd client
+### 10. 测试与检查
 
-# 构建 Debug 版本（快速，用于调试）
-pnpm tauri build --debug
+常用检查命令：
 
-# 构建 Release 版本（优化体积和性能）
-pnpm tauri build
-```
+```powershell
+# Python 测试
+python -m pytest
 
-构建产出物：
-
-| 产出 | 路径 |
-|------|------|
-| 可执行文件 | `client/src-tauri/target/debug/ntetoolbox-client.exe`（debug）或 `target/release/` |
-| NSIS 安装包 | `client/src-tauri/target/{debug\|release}/bundle/nsis/MaaToolbox Client_*_x64-setup.exe` |
-| MSI 安装包 | `client/src-tauri/target/{debug\|release}/bundle/msi/MaaToolbox Client_*_x64_en-US.msi` |
-
-#### 前端测试
-
-```bash
+# 前端测试和构建
 cd client
 pnpm test
+pnpm build
+pnpm prepare:maafw
+
+# Rust 编译检查
+cd src-tauri
+cargo check
 ```
 
-#### 注意事项
-
-- 确保 MinGW 的 `bin` 目录在系统 PATH 中，否则 Rust 编译链接会失败
-- 如果遇到 `export ordinal too large`，检查 `client/src-tauri/Cargo.toml` 中的 `crate-type`，应避免为 Windows GNU 构建保留 `cdylib`
-- 构建 Release 版本时间较长（首次约 10+ 分钟），后续增量编译只需几十秒
-- 静态资源（图片等）请放在 `client/public/` 目录，Vite 会原样复制到构建产物中
-
-### 完整打包流程
-
-本项目打包分为三部分：**Python Agent**、**GUI 前端**、**安装包**。
-
-#### 1. 打包 Python Agent
-
-依赖 [PyInstaller](https://pyinstaller.org/)，将 Python 自动化脚本打包为独立 `agent.exe`：
-
-```bash
-# 在项目根目录
-pip install -e . pyinstaller
-python tools/build_agent.py
-```
-
-产出物：`dist/agent.exe`
-
-#### 2. 构建 MaaToolbox Client（新 UI）
-
-参见上方「构建发布包」章节。
-
-#### 3. 构建传统 GUI 安装包（MFAA / MXU）
-
-使用 PowerShell 脚本自动化打包：
+如果需要运行 Rust 格式化，先确保当前 Rust 工具链安装了 rustfmt：
 
 ```powershell
-# 构建 MFAA 版本安装目录
-tools\build_install.ps1 -Gui mfaa -Version 1.0.0
-
-# 或构建 MXU 版本安装目录
-tools\build_install.ps1 -Gui mxu -Version 1.0.0
+rustup component add rustfmt --toolchain stable-x86_64-pc-windows-gnu
+cargo fmt
 ```
 
-该脚本会自动：
-1. 验证 `deps\bin`（MaaFramework）存在
-2. 复制 GUI 前端文件
-3. 调用 PyInstaller 打包 `agent.exe`
-4. 执行 `tools\install.py` 组装安装目录
+### 11. 可选：构建传统 GUI 安装包
 
-#### 4. 生成 NSIS 安装包
+传统 MFAA / MXU 打包依赖外部 GUI 文件，不是仅靠本仓库源码就能生成。构建前需要满足：
+
+- `deps\bin` 和 `deps\share` 已按上文准备好
+- MFAA：`MFA\MFAAvalonia.exe` 存在
+- MXU：`MXU\mxu.exe` 存在
+- 已安装 Python 依赖和 PyInstaller
+
+构建安装目录：
 
 ```powershell
-# 将安装目录打包为 NSIS 安装程序
-tools\build_nsis.ps1 -Gui mfaa
+# MFAA
+.\tools\build_install.ps1 -Gui mfaa -Version v1.0.0
 
-# 指定安装目录和输出目录
-tools\build_nsis.ps1 -Gui mfaa -InstallDir .\install -OutputDir .\dist-installer
+# MXU
+.\tools\build_install.ps1 -Gui mxu -Version v1.0.0
 ```
 
-产出物：`dist-installer/NTEToolbox-MFAA-Setup.exe`
+输出目录默认为 `install`。
 
-#### 前置依赖汇总
+生成 NSIS 安装包：
 
-| 依赖 | 用途 | 安装方式 |
-|------|------|----------|
-| Python ≥ 3.14 | Agent 运行时 | [python.org](https://www.python.org/downloads/) |
-| PyInstaller | 打包 agent.exe | `pip install pyinstaller` |
-| MaaFramework | 自动化引擎 | 下载到 `deps\bin` |
-| Node.js + pnpm | 新 UI 前端构建 | [nodejs.org](https://nodejs.org/) |
-| Rust (GNU) + MinGW | 新 UI 后端编译 | [rustup.rs](https://rustup.rs/) + winget |
-| NSIS (makensis) | Windows 安装包 | [nsis.sourceforge.io](https://nsis.sourceforge.io/) |
-| .NET Desktop Runtime | MFAA GUI 运行时 | 安装时自动下载 |
+```powershell
+.\tools\build_nsis.ps1 -Gui mfaa
+```
+
+如果 `makensis` 不在 `PATH` 中，可以指定完整路径：
+
+```powershell
+.\tools\build_nsis.ps1 -Gui mfaa -Makensis "C:\Program Files (x86)\NSIS\makensis.exe"
+```
+
+默认产物：`dist-installer\NTEToolbox-MFAA-Setup.exe` 或 `dist-installer\NTEToolbox-MXU-Setup.exe`。
+
+### 常见问题
+
+#### `MaaFramework files were not found at deps\bin`
+
+没有下载 MaaFramework，或解压后多了一层目录。确认 `.\deps\bin\MaaPiCli.exe` 存在。
+
+#### `gcc` / `ld` / `dlltool` not found
+
+WinLibs MinGW 没装好，或 `mingw64\bin` 不在 `PATH` 中。优先使用 `.\tools\build_tauri.ps1`，脚本会自动查找 winget 安装路径。
+
+#### `pnpm` not recognized
+
+执行：
+
+```powershell
+corepack enable
+corepack prepare pnpm@11.3.0 --activate
+```
+
+然后重新打开终端。
+
+#### `assets\MaaCommonAssets\OCR` 不存在
+
+子模块没有拉取完整。执行：
+
+```powershell
+git submodule update --init --recursive
+```
+
+#### 直接 `pnpm tauri build` 后，安装包仍要求用户安装 Python
+
+构建前缺少 `dist\agent.exe`。先运行：
+
+```powershell
+python .\tools\build_agent.py
+```
+
+或改用：
+
+```powershell
+.\tools\build_tauri.ps1
+```
+
+#### MSI 打包报 `failed to run light.exe`
+
+MSI 依赖 WiX Toolset v3。Tauri 官方也提示，Windows 上构建 MSI 时需要系统启用 VBSCRIPT 可选功能；如果本机关闭了该功能，需要在“设置 -> 应用 -> 可选功能 -> 更多 Windows 功能”中启用。
+
+#### 在 OneDrive 目录下 Rust 构建异常或很慢
+
+使用脚本参数把 Rust 产物放到非同步目录：
+
+```powershell
+.\tools\build_tauri.ps1 -TargetDir C:\BuildCache\ntetoolbox-tauri-target
+```
