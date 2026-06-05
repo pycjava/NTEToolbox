@@ -157,6 +157,32 @@ cd client
 pnpm install
 ```
 
+#### Tauri 初始化与 GNU 工具链修复记录
+
+本次为修复 MaaToolbox Client 的 Tauri 构建环境，已完成以下调整：
+
+1. 执行 `pnpm tauri init --force`，重新生成 Tauri 模板文件，并补齐 `tauri-plugin-log`、`serde`、`serde_json` 等依赖
+2. 恢复被初始化覆盖的项目配置，包括项目名称、应用标识符、窗口尺寸等
+3. 通过 `winget install BrechtSanders.WinLibs.POSIX.UCRT` 安装 WinLibs MinGW，补齐 `gcc`、`ld`、`dlltool` 等 GNU 工具链组件
+4. 将 Rust 默认工具链切换为 GNU：
+
+   ```bash
+   rustup default stable-x86_64-pc-windows-gnu
+   ```
+
+5. 移除 `Cargo.toml` 中的 `cdylib` crate type，仅保留 `staticlib` 和 `rlib`，规避 GNU `ld` 的 `export ordinal too large` 链接错误
+
+> [!WARNING]
+> 每次新开终端都需要确保 MinGW 的 `bin` 目录在 `PATH` 中，否则 Tauri/Rust 构建可能仍会找不到 GNU 链接器。
+
+如果使用 winget 安装 WinLibs，常见路径如下：
+
+```powershell
+$env:PATH = "C:\Users\mlamp\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin;$env:PATH"
+```
+
+也可以将该 `bin` 目录永久加入系统 `PATH`。
+
 #### 开发模式
 
 ```bash
@@ -196,6 +222,7 @@ pnpm test
 #### 注意事项
 
 - 确保 MinGW 的 `bin` 目录在系统 PATH 中，否则 Rust 编译链接会失败
+- 如果遇到 `export ordinal too large`，检查 `client/src-tauri/Cargo.toml` 中的 `crate-type`，应避免为 Windows GNU 构建保留 `cdylib`
 - 构建 Release 版本时间较长（首次约 10+ 分钟），后续增量编译只需几十秒
 - 静态资源（图片等）请放在 `client/public/` 目录，Vite 会原样复制到构建产物中
 

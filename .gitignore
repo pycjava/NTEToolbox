@@ -5,6 +5,7 @@ docs/.vuepress/.temp
 *.d
 .claude
 MFA
+.playwright-cli
 
 # Compiled Object files
 build
