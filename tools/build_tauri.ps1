@@ -107,23 +107,68 @@ Set-Location $repoRoot
 Invoke-Step "python" @("-m", "pip", "install", "-e", ".", "pyinstaller")
 Invoke-Step "python" @(".\tools\build_agent.py")
 
+# 清理 pip install -e . 生成的 .egg-info 目录
+$eggInfoDir = Join-Path $repoRoot "ntetoolbox.egg-info"
+if (Test-Path $eggInfoDir) {
+    Remove-Item -Recurse -Force $eggInfoDir
+    Write-Host "       Cleaned up $eggInfoDir" -ForegroundColor DarkGray
+}
+
 $agentDistExe = Join-Path $repoRoot "dist\agent.exe"
 if (-not (Test-Path -LiteralPath $agentDistExe -PathType Leaf)) {
     throw "agent.exe was not built: $agentDistExe"
 }
 
 # ---------------------------------------------------------------------------
-# 5. Build Tauri app
+# 5. Build Tauri app (split: pre-copy DLL → compile → inject DLL → bundle NSIS)
 # ---------------------------------------------------------------------------
-Write-Host "[5/6] Building Tauri app (pnpm tauri build) ..." -ForegroundColor Cyan
-
 Set-Location $clientDir
+$releaseDir = Join-Path $TargetDir "release"
+$genDir = Join-Path $srcTauriDir "gen"
+$genDllPath = Join-Path $genDir "WebView2Loader.dll"
 
+# Pre-copy WebView2Loader.dll from any existing build so cargo resource validation passes.
+# The correct release DLL will overwrite this after the compile step.
+if (-not (Test-Path $genDllPath)) {
+    $dllCandidates = @(
+        (Join-Path $releaseDir "WebView2Loader.dll"),
+        (Join-Path $TargetDir "debug\WebView2Loader.dll"),
+        (Join-Path $srcTauriDir "target\debug\WebView2Loader.dll"),
+        (Join-Path $srcTauriDir "target\release\WebView2Loader.dll")
+    )
+    foreach ($candidate in $dllCandidates) {
+        if (Test-Path $candidate) {
+            New-Item -ItemType Directory -Force -Path $genDir | Out-Null
+            Copy-Item -Force $candidate $genDllPath
+            Write-Host "       Pre-copied WebView2Loader.dll from $candidate" -ForegroundColor DarkGray
+            break
+        }
+    }
+}
+
+# 5a. Compile Rust + frontend, skip NSIS/MSI bundling
+Write-Host "[5/7] Building Tauri app (compile only) ..." -ForegroundColor Cyan
 $buildStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-Invoke-Step pnpm @("tauri", "build")
+Invoke-Step pnpm @("tauri", "build", "--no-bundle")
 $buildStopwatch.Stop()
+Write-Host "       Compile completed in $($buildStopwatch.Elapsed.ToString('mm\:ss'))" -ForegroundColor Green
 
-Write-Host "       Build completed in $($buildStopwatch.Elapsed.ToString('mm\:ss'))" -ForegroundColor Green
+# 5b. Overwrite with the correct release DLL
+Write-Host "[6/7] Injecting WebView2Loader.dll (release) ..." -ForegroundColor Cyan
+$webviewDllPath = Join-Path $releaseDir "WebView2Loader.dll"
+if (Test-Path $webviewDllPath) {
+    Copy-Item -Force $webviewDllPath $genDllPath
+    Write-Host "       WebView2Loader.dll -> gen/ (release)"
+} else {
+    Write-Host "       WARNING: WebView2Loader.dll not found at $webviewDllPath" -ForegroundColor Yellow
+}
+
+# 5c. Create NSIS installer (cargo build is no-op, only packaging runs)
+Write-Host "[7/7] Creating NSIS installer ..." -ForegroundColor Cyan
+$nsisStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+Invoke-Step pnpm @("tauri", "build", "--bundles", "nsis")
+$nsisStopwatch.Stop()
+Write-Host "       NSIS packaging completed in $($nsisStopwatch.Elapsed.ToString('mm\:ss'))" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # 6. Collect output artifacts
@@ -148,6 +193,13 @@ if (Test-Path $exePath) {
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
     Copy-Item -Force $exePath $OutputDir
     Write-Host "       EXE -> $OutputDir\MaaToolbox Client.exe"
+}
+
+# Copy WebView2Loader.dll (required next to exe for GNU toolchain builds)
+$webviewDllPath = Join-Path $releaseDir "WebView2Loader.dll"
+if (Test-Path $webviewDllPath) {
+    Copy-Item -Force $webviewDllPath $OutputDir
+    Write-Host "       DLL -> $OutputDir\WebView2Loader.dll"
 }
 
 # Copy NSIS / MSI installers if they exist
