@@ -33,8 +33,11 @@ impl LiveViewCapture {
         self.stop.store(false, Ordering::Relaxed);
         let stop = self.stop.clone();
 
+        log::debug!("启动实时视图推流线程: target_window={target_window:?}, fps={fps}");
+
         let handle = thread::spawn(move || {
             let interval = Duration::from_millis(1000 / fps.max(1) as u64);
+            let mut frame_index: u64 = 0;
 
             while !stop.load(Ordering::Relaxed) {
                 let t0 = Instant::now();
@@ -46,8 +49,11 @@ impl LiveViewCapture {
                             &jpeg_bytes,
                         );
                         let _ = app.emit("live-view-frame", b64);
+                        frame_index += 1;
+                        log::debug!("推流帧 #{frame_index}: jpeg={} 字节, 耗时={:?}", jpeg_bytes.len(), t0.elapsed());
                     }
                     Err(msg) => {
+                        log::warn!("截屏失败: {msg}");
                         let _ = app.emit("live-view-error", msg);
                     }
                 }
@@ -57,6 +63,8 @@ impl LiveViewCapture {
                     thread::sleep(interval - elapsed);
                 }
             }
+
+            log::debug!("实时视图推流线程退出: 共推送 {frame_index} 帧");
         });
 
         self.handle = Some(handle);
@@ -69,7 +77,9 @@ impl LiveViewCapture {
     fn stop_internal(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
+            log::debug!("等待实时视图推流线程退出...");
             let _ = handle.join();
+            log::debug!("实时视图推流线程已退出");
         }
     }
 }
@@ -87,6 +97,7 @@ fn start_live_view(
     target_window: String,
     fps: u32,
 ) -> Result<(), String> {
+    log::debug!("start_live_view: target_window={target_window:?}, fps={fps}");
     state
         .lock()
         .map_err(|e| e.to_string())?
@@ -98,6 +109,7 @@ fn start_live_view(
 fn stop_live_view(
     state: State<'_, Mutex<LiveViewCapture>>,
 ) -> Result<(), String> {
+    log::debug!("stop_live_view");
     state
         .lock()
         .map_err(|e| e.to_string())?
@@ -159,7 +171,7 @@ pub fn run() {
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
+            .level(log::LevelFilter::Debug)
             .build(),
         )?;
       }

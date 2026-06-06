@@ -72,10 +72,14 @@ extern "system" {
 
 /// 捕获指定窗口的截图，返回原始 JPEG 字节。
 pub fn capture_window_jpeg(hwnd_str: &str) -> Result<Vec<u8>, String> {
+    log::debug!("开始截屏: hwnd_str={hwnd_str:?}");
+
     let hwnd = parse_hwnd(hwnd_str)?;
     if hwnd == 0 {
+        log::error!("无效的窗口句柄: hwnd=0");
         return Err("无效的窗口句柄".to_string());
     }
+    log::debug!("解析句柄: hwnd={hwnd}");
 
     unsafe {
         // 1. 获取窗口整体尺寸
@@ -86,44 +90,54 @@ pub fn capture_window_jpeg(hwnd_str: &str) -> Result<Vec<u8>, String> {
             bottom: 0,
         };
         if GetWindowRect(hwnd, &mut rect) == 0 {
+            log::error!("GetWindowRect 失败: hwnd={hwnd}");
             return Err("目标窗口不可用".to_string());
         }
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
+        log::debug!("窗口尺寸: {width}x{height} (rect={},{},{},{})", rect.left, rect.top, rect.right, rect.bottom);
+
         if width <= 0 || height <= 0 {
+            log::warn!("窗口已最小化或尺寸无效: {width}x{height}");
             return Err("窗口已最小化".to_string());
         }
 
         // 2. 获取窗口 DC 并创建兼容内存 DC + 位图
         let hdc_window = GetWindowDC(hwnd);
         if hdc_window == 0 {
+            log::error!("GetWindowDC 失败: hwnd={hwnd}");
             return Err("GetWindowDC 失败".to_string());
         }
 
         let hdc_mem = CreateCompatibleDC(hdc_window);
         if hdc_mem == 0 {
+            log::error!("CreateCompatibleDC 失败");
             ReleaseDC(hwnd, hdc_window);
             return Err("CreateCompatibleDC 失败".to_string());
         }
 
         let h_bitmap = CreateCompatibleBitmap(hdc_window, width, height);
         if h_bitmap == 0 {
+            log::error!("CreateCompatibleBitmap 失败: {width}x{height}");
             DeleteDC(hdc_mem);
             ReleaseDC(hwnd, hdc_window);
             return Err("CreateCompatibleBitmap 失败".to_string());
         }
+        log::debug!("GDI 对象创建成功: hdc_window={hdc_window}, hdc_mem={hdc_mem}, h_bitmap={h_bitmap}");
 
         // 3. 选入位图并调用 PrintWindow
         let old_obj = SelectObject(hdc_mem, h_bitmap as HGdiObj);
         let print_ok = PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT);
 
         if print_ok == 0 {
+            log::error!("PrintWindow 失败: hwnd={hwnd}");
             SelectObject(hdc_mem, old_obj);
             DeleteObject(h_bitmap as HGdiObj);
             DeleteDC(hdc_mem);
             ReleaseDC(hwnd, hdc_window);
             return Err("PrintWindow 失败".to_string());
         }
+        log::debug!("PrintWindow 成功");
 
         // 4. 提取像素数据
         // 32bpp 每行 = width * 4 字节，天然 4 字节对齐，无需额外 padding
@@ -160,10 +174,13 @@ pub fn capture_window_jpeg(hwnd_str: &str) -> Result<Vec<u8>, String> {
         DeleteObject(h_bitmap as HGdiObj);
         DeleteDC(hdc_mem);
         ReleaseDC(hwnd, hdc_window);
+        log::debug!("GDI 资源已释放");
 
         if scan_result == 0 {
+            log::error!("GetDIBits 失败: scan_result=0");
             return Err("GetDIBits 失败".to_string());
         }
+        log::debug!("GetDIBits 成功: 提取 {pixel_buf_len} 字节像素数据");
 
         // 6. BGRA → RGB 批量转换（避免 put_pixel 双重循环）
         let pixel_count = width as usize * height as usize;
@@ -174,16 +191,24 @@ pub fn capture_window_jpeg(hwnd_str: &str) -> Result<Vec<u8>, String> {
             rgb_flat.push(chunk[0]); // B
         }
         let rgb_image = image::RgbImage::from_vec(width as u32, height as u32, rgb_flat)
-            .ok_or_else(|| "图像缓冲区大小不匹配".to_string())?;
+            .ok_or_else(|| {
+                log::error!("图像缓冲区大小不匹配");
+                "图像缓冲区大小不匹配".to_string()
+            })?;
 
         // 7. JPEG 编码
         let mut jpeg_buf = Cursor::new(Vec::new());
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_buf, 70);
         rgb_image
             .write_with_encoder(encoder)
-            .map_err(|e| format!("JPEG 编码失败: {e}"))?;
+            .map_err(|e| {
+                log::error!("JPEG 编码失败: {e}");
+                format!("JPEG 编码失败: {e}")
+            })?;
 
-        Ok(jpeg_buf.into_inner())
+        let jpeg_bytes = jpeg_buf.into_inner();
+        log::debug!("截屏完成: {width}x{height}, JPEG 大小={} 字节", jpeg_bytes.len());
+        Ok(jpeg_bytes)
     }
 }
 
