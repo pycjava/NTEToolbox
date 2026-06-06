@@ -486,6 +486,10 @@ class Fish(CustomAction):
         context: Context,
         argv: CustomAction.RunArg,
     ) -> bool:
+        log.debug(
+            f"Fish.run() called: node={argv.node_name}, "
+            f"stopping={context.tasker.stopping}"
+        )
         option: Fish_option = get_option(context, argv)
         log.debug(f"{option=}")
 

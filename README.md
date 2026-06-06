@@ -63,26 +63,12 @@
 
 ### GUI
 
-提供三种 GUI，按需选择：
-
-* #### MaaToolbox Client（新 UI，推荐）
-
-  基于 Tauri v2 + React 的新一代客户端，界面现代、轻量  
-  在 [Release](https://github.com/op200/NTEToolbox/releases) 中下载 NSIS 或 MSI 安装包
-
-* #### MFAA
-
-  启动时会自动判断 [.NET](https://dotnet.microsoft.com) 和 [C++](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) 运行时  
-  若电脑中没有对应运行时，需按 GUI 给出的提示在微软官网下载或 GUI 自动下载
-
-* #### MXU
-
-  体积小，执行效率也比 MFAA 高  
-  如果觉得 MFAA 钓鱼时溜鱼跟随不及时，最好换用这个 GUI  
+MaaToolbox Client，基于 Tauri v2 + React 的新一代客户端，界面现代、轻量
+在 [Release](https://github.com/op200/NTEToolbox/releases) 中下载 NSIS 或 MSI 安装包
 
 ### 启动
 
-打开文件夹内对应的 GUI 的 exe 文件（Windows）即可启动
+打开 `MaaToolbox Client.exe` 即可启动
 
 *因为要支持后台运行，所以必须**以管理员身份运行**，如果嫌每次都要右键exe麻烦，可以在属性里把该exe设为 `以管理员身份运行此程序`*
 
@@ -107,7 +93,7 @@
 
 ## 开发与编译
 
-以下内容用于从源码构建项目。当前仓库覆盖最完整、最推荐的编译目标是 **Windows x64 的 MaaToolbox Client（新 UI）**。传统 MFAA / MXU 打包仍可用，但需要额外准备对应 GUI 的已发布文件。
+以下内容用于从源码构建项目。当前仓库覆盖最完整、最推荐的编译目标是 **Windows x64 的 MaaToolbox Client**。
 
 > [!IMPORTANT]
 > 下方命令默认在 PowerShell 中执行。除非命令里写了 `cd client`，否则都在仓库根目录执行。
@@ -207,7 +193,7 @@ cd ..
 
 ### 6. 一键串联构建脚本
 
-推荐使用顶层编排脚本。它会先构建新 UI，并自动检测 `MFA\MFAAvalonia.exe` / `MXU\mxu.exe`，把可用的传统 GUI 安装目录和 NSIS 安装包也串起来构建：
+推荐使用顶层编排脚本：
 
 ```powershell
 .\tools\build_all.ps1
@@ -216,28 +202,13 @@ cd ..
 常用参数：
 
 ```powershell
-# 只构建新 UI，不处理传统 GUI
-.\tools\build_all.ps1 -LegacyGui none
-
 # 只预览将执行哪些构建命令，不真正构建
 .\tools\build_all.ps1 -PlanOnly
-
-# 显式构建 MFAA 安装目录和 NSIS 包
-.\tools\build_all.ps1 -SkipTauri -LegacyGui mfaa -Version v1.0.0
-
-# 同时尝试构建 MFAA 和 MXU；缺任何一个 GUI 源都会直接报错
-.\tools\build_all.ps1 -LegacyGui both -Version v1.0.0
 ```
 
-`build_all.ps1` 会按需调用：
+`build_all.ps1` 会调用 `tools\build_tauri.ps1`。
 
-- `tools\build_tauri.ps1`
-- `tools\build_install.ps1`
-- `tools\build_nsis.ps1`
-
-如果 `MFA` / `MXU` 目录不存在，默认 `-LegacyGui auto` 会跳过缺失的传统 GUI。若你传入 `-LegacyGui mfaa`、`-LegacyGui mxu` 或 `-LegacyGui both`，缺少对应 GUI exe 会提前失败，避免半路打包出错。
-
-### 7. 只构建新 UI
+### 7. Tauri 构建脚本
 
 如果只需要构建 MaaToolbox Client，可直接使用 Tauri 构建脚本：
 
@@ -335,41 +306,6 @@ cargo check
 rustup component add rustfmt --toolchain stable-x86_64-pc-windows-gnu
 cargo fmt
 ```
-
-### 11. 可选：构建传统 GUI 安装包
-
-传统 MFAA / MXU 打包依赖外部 GUI 文件，不是仅靠本仓库源码就能生成。构建前需要满足：
-
-- `deps\bin` 和 `deps\share` 已按上文准备好
-- MFAA：`MFA\MFAAvalonia.exe` 存在
-- MXU：`MXU\mxu.exe` 存在
-- 已安装 Python 依赖和 PyInstaller
-
-构建安装目录：
-
-```powershell
-# MFAA
-.\tools\build_install.ps1 -Gui mfaa -Version v1.0.0
-
-# MXU
-.\tools\build_install.ps1 -Gui mxu -Version v1.0.0
-```
-
-输出目录默认为 `install`。
-
-生成 NSIS 安装包：
-
-```powershell
-.\tools\build_nsis.ps1 -Gui mfaa
-```
-
-如果 `makensis` 不在 `PATH` 中，可以指定完整路径：
-
-```powershell
-.\tools\build_nsis.ps1 -Gui mfaa -Makensis "C:\Program Files (x86)\NSIS\makensis.exe"
-```
-
-默认产物：`dist-installer\NTEToolbox-MFAA-Setup.exe` 或 `dist-installer\NTEToolbox-MXU-Setup.exe`。
 
 ### 常见问题
 

@@ -8,7 +8,7 @@
 NTEToolbox/
 ├── agent/              # Python 自动化 agent（核心逻辑）
 ├── assets/             # 游戏资源 + OCR 模型（MaaCommonAssets 子模块）
-├── client/             # Tauri v2 + React 前端（新 UI）
+├── client/             # Tauri v2 + React 前端
 │   ├── src/            # React/TypeScript 前端源码
 │   ├── src-tauri/      # Rust/Tauri 后端
 │   │   ├── src/        #   lib.rs, maa_bridge.rs, client_config.rs
@@ -22,12 +22,9 @@ NTEToolbox/
 ├── tests/              # Python pytest 测试
 ├── tools/              # 构建脚本
 │   ├── build_tauri.ps1 #   Tauri 一键构建（6 步）
-│   ├── build_all.ps1   #   全量构建编排（Tauri + 传统 GUI）
+│   ├── build_all.ps1   #   全量构建编排
 │   ├── build_agent.py  #   PyInstaller 打包 Python agent
-│   ├── build_install.ps1
-│   ├── build_nsis.ps1
-│   ├── configure.py    #   OCR 模型准备
-│   └── install.py      #   下载传统 GUI
+│   └── configure.py    #   OCR 模型准备
 ├── pyproject.toml      # Python 包 ntetoolbox，Python >=3.14
 └── package.json        # 根 pnpm workspace
 ```
@@ -43,7 +40,7 @@ NTEToolbox/
 | Rust | >= 1.77.2 | Tauri 后端（`stable-x86_64-pc-windows-gnu` 工具链） |
 | WinLibs MinGW | POSIX UCRT | GNU 链接器（`gcc`/`ld`/`dlltool`） |
 | WebView2 | Win10 1803+ 自带 | Tauri 运行时 |
-| NSIS / WiX v3 | 可选 | Windows 安装包 |
+| NSIS / WiX v3 | 可选 | Tauri 安装包生成 |
 
 > **国内环境**：cargo 需配置 rsproxy.cn 镜像，见 `~/.cargo/config.toml`。
 
@@ -52,10 +49,10 @@ NTEToolbox/
 在 PowerShell 中执行，从仓库根目录：
 
 ```powershell
-# 只构建新 UI（推荐）
+# 一键构建（推荐）
 .\tools\build_tauri.ps1
 
-# 全量构建（含传统 GUI）
+# 或使用全量构建编排
 .\tools\build_all.ps1
 ```
 

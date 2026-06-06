@@ -769,7 +769,7 @@ type LiveViewPanelProps = {
 function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fps, setFps] = useState(10);
+  const [fps, setFps] = useState(20);
   const [actualFps, setActualFps] = useState(0);
   const frameTimesRef = useRef<number[]>([]);
   const unlistenFrameRef = useRef<UnlistenFn | null>(null);
@@ -879,6 +879,7 @@ function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
             <option value={5}>5 FPS</option>
             <option value={10}>10 FPS</option>
             <option value={15}>15 FPS</option>
+            <option value={20}>20 FPS</option>
             <option value={30}>30 FPS</option>
           </select>
         </div>

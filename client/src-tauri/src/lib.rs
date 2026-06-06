@@ -4,15 +4,26 @@ mod window_capture;
 mod window_enumeration;
 
 use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest};
-use window_enumeration::WindowInfo;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::fs::{self, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use window_enumeration::WindowInfo;
 
 // ── 实时视图推流 ────────────────────────────────────────────────────
+
+const LIVE_VIEW_JPEG_QUALITY: u8 = 50;
+const LIVE_VIEW_MAX_WIDTH: u32 = 512;
+const LIVE_VIEW_MAX_HEIGHT: u32 = 480;
+const LIVE_VIEW_LOG_EVERY_N_FRAMES: u64 = 30;
+const CLIENT_LOG_FILE_NAME: &str = "ntetoolbox-client";
+const CLIENT_LOG_MAX_FILE_SIZE: u128 = 20 * 1024 * 1024;
+const CLIENT_LOG_KEEP_FILES: usize = 5;
 
 struct LiveViewCapture {
     stop: Arc<AtomicBool>,
@@ -39,18 +50,55 @@ impl LiveViewCapture {
             let interval = Duration::from_millis(1000 / fps.max(1) as u64);
             let mut frame_index: u64 = 0;
 
+            let mut capture_session =
+                match window_capture::WindowCaptureSession::new(&target_window) {
+                    Ok(session) => session,
+                    Err(msg) => {
+                        log::warn!("创建实时视图捕获会话失败: {msg}");
+                        let _ = app.emit("live-view-error", msg);
+                        return;
+                    }
+                };
+
             while !stop.load(Ordering::Relaxed) {
                 let t0 = Instant::now();
+                let log_details = frame_index % LIVE_VIEW_LOG_EVERY_N_FRAMES == 0;
+                let capture_options = window_capture::CaptureOptions {
+                    jpeg_quality: LIVE_VIEW_JPEG_QUALITY,
+                    max_output_width: Some(LIVE_VIEW_MAX_WIDTH),
+                    max_output_height: Some(LIVE_VIEW_MAX_HEIGHT),
+                    log_details,
+                };
 
-                match window_capture::capture_window_jpeg(&target_window) {
-                    Ok(jpeg_bytes) => {
+                match capture_session.capture_jpeg(capture_options) {
+                    Ok(frame) => {
+                        let encode_b64_start = Instant::now();
                         let b64 = base64::Engine::encode(
                             &base64::engine::general_purpose::STANDARD,
-                            &jpeg_bytes,
+                            &frame.jpeg_bytes,
                         );
+                        let encode_b64 = encode_b64_start.elapsed();
+
+                        let emit_start = Instant::now();
                         let _ = app.emit("live-view-frame", b64);
+                        let emit_frame = emit_start.elapsed();
+
                         frame_index += 1;
-                        log::debug!("推流帧 #{frame_index}: jpeg={} 字节, 耗时={:?}", jpeg_bytes.len(), t0.elapsed());
+                        if log_details {
+                            log::debug!(
+                                "推流帧 #{frame_index}: source={}x{}, output={}x{}, jpeg={} 字节, \
+                                 total={:?}, capture={:?}, base64={:?}, emit={:?}",
+                                frame.stats.source_width,
+                                frame.stats.source_height,
+                                frame.stats.output_width,
+                                frame.stats.output_height,
+                                frame.jpeg_bytes.len(),
+                                t0.elapsed(),
+                                frame.stats.timings.total,
+                                encode_b64,
+                                emit_frame
+                            );
+                        }
                     }
                     Err(msg) => {
                         log::warn!("截屏失败: {msg}");
@@ -106,14 +154,9 @@ fn start_live_view(
 }
 
 #[tauri::command]
-fn stop_live_view(
-    state: State<'_, Mutex<LiveViewCapture>>,
-) -> Result<(), String> {
+fn stop_live_view(state: State<'_, Mutex<LiveViewCapture>>) -> Result<(), String> {
     log::debug!("stop_live_view");
-    state
-        .lock()
-        .map_err(|e| e.to_string())?
-        .stop();
+    state.lock().map_err(|e| e.to_string())?.stop();
     Ok(())
 }
 
@@ -121,71 +164,153 @@ fn stop_live_view(
 
 #[tauri::command]
 fn load_client_config(app: AppHandle) -> Result<Option<Value>, String> {
-  let config_dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-  client_config::load_client_config_from_dir(&config_dir).map_err(|error| error.to_string())
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    client_config::load_client_config_from_dir(&config_dir).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn save_client_config(app: AppHandle, config: Value) -> Result<(), String> {
-  let config_dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-  client_config::save_client_config_to_dir(&config_dir, &config).map_err(|error| error.to_string())
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    client_config::save_client_config_to_dir(&config_dir, &config)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn start_maa_task(
-  app: AppHandle,
-  runtime: State<'_, Mutex<MaaBridgeRuntime>>,
-  request: MaaTaskStartRequest,
+    app: AppHandle,
+    runtime: State<'_, Mutex<MaaBridgeRuntime>>,
+    request: MaaTaskStartRequest,
 ) -> Result<MaaTaskRunResponse, String> {
-  runtime
-    .lock()
-    .map_err(|error| error.to_string())?
-    .start_task(&app, &request)
+    runtime
+        .lock()
+        .map_err(|error| error.to_string())?
+        .start_task(&app, &request)
 }
 
 #[tauri::command]
 fn enumerate_windows() -> Result<Vec<WindowInfo>, String> {
-  window_enumeration::enumerate_visible_windows()
+    window_enumeration::enumerate_visible_windows()
 }
 
 #[tauri::command]
 fn stop_maa_task(
-  runtime: State<'_, Mutex<MaaBridgeRuntime>>,
-  game_id: String,
-  feature_id: String,
+    runtime: State<'_, Mutex<MaaBridgeRuntime>>,
+    game_id: String,
+    feature_id: String,
 ) -> Result<MaaTaskRunResponse, String> {
-  runtime
-    .lock()
-    .map_err(|error| error.to_string())?
-    .stop_task(&game_id, &feature_id)
+    runtime
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stop_task(&game_id, &feature_id)
+}
+
+fn client_debug_log_dir(app: &tauri::App) -> Result<PathBuf, tauri::Error> {
+    if let Ok(log_dir) = exe_debug_log_dir() {
+        if is_log_dir_writable(&log_dir) {
+            return Ok(log_dir);
+        }
+    }
+
+    Ok(app
+        .path()
+        .app_local_data_dir()?
+        .join("maa-runtime")
+        .join("debug"))
+}
+
+fn exe_debug_log_dir() -> Result<PathBuf, std::io::Error> {
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .map(|path| path.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    Ok(exe_dir.join("debug"))
+}
+
+fn is_log_dir_writable(path: &Path) -> bool {
+    if fs::create_dir_all(path).is_err() {
+        return false;
+    }
+
+    let probe_path = path.join(".ntetoolbox-log-write-test");
+    let writable = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe_path)
+        .is_ok();
+    let _ = fs::remove_file(probe_path);
+
+    writable
+}
+
+fn client_log_targets(debug_log_dir: PathBuf) -> Vec<Target> {
+    let file_target = Target::new(TargetKind::Folder {
+        path: debug_log_dir,
+        file_name: Some(CLIENT_LOG_FILE_NAME.to_string()),
+    });
+
+    if cfg!(debug_assertions) {
+        vec![Target::new(TargetKind::Stdout), file_target]
+    } else {
+        vec![file_target]
+    }
+}
+
+fn stop_maa_runtime_on_exit(app: &AppHandle) {
+    let runtime = app.state::<Mutex<MaaBridgeRuntime>>();
+    match runtime.lock() {
+        Ok(mut runtime) => {
+            if let Err(error) = runtime.stop_all_tasks() {
+                log::warn!("Failed to stop Maa runtime on app exit: {error}");
+            }
+        }
+        Err(error) => {
+            log::warn!("Failed to lock Maa runtime on app exit: {error}");
+        }
+    };
 }
 
 // ── 入口 ─────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
-    .manage(Mutex::new(MaaBridgeRuntime::default()))
-    .manage(Mutex::new(LiveViewCapture::new()))
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Debug)
-            .build(),
-        )?;
-      }
-      Ok(())
-    })
-    .invoke_handler(tauri::generate_handler![
-      load_client_config,
-      save_client_config,
-      start_maa_task,
-      stop_maa_task,
-      enumerate_windows,
-      start_live_view,
-      stop_live_view
-    ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    tauri::Builder::default()
+        .manage(Mutex::new(MaaBridgeRuntime::default()))
+        .manage(Mutex::new(LiveViewCapture::new()))
+        .setup(|app| {
+            let debug_log_dir = client_debug_log_dir(app)?;
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .clear_targets()
+                    .targets(client_log_targets(debug_log_dir))
+                    .rotation_strategy(RotationStrategy::KeepSome(CLIENT_LOG_KEEP_FILES))
+                    .max_file_size(CLIENT_LOG_MAX_FILE_SIZE)
+                    .level(log::LevelFilter::Info)
+                    .level_for("ntetoolbox_client_lib", log::LevelFilter::Debug)
+                    .build(),
+            )?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            load_client_config,
+            save_client_config,
+            start_maa_task,
+            stop_maa_task,
+            enumerate_windows,
+            start_live_view,
+            stop_live_view
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_maa_runtime_on_exit(app),
+            _ => {}
+        });
 }
