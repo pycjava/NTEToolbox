@@ -3,16 +3,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
-const { invokeMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn()
+const { invokeMock, listenMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  listenMock: vi.fn().mockResolvedValue(vi.fn())
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: listenMock
+}));
+
 afterEach(() => {
   invokeMock.mockReset();
+  listenMock.mockResolvedValue(vi.fn());
   cleanup();
 });
 
@@ -58,8 +64,6 @@ describe("App", () => {
   it("keeps running state inline on the feature row after launch", () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
-
-    expect(screen.queryByRole("button", { name: "实时视图" })).toBeNull();
 
     const fishRow = screen.getByRole("article", { name: /钓鱼/ });
     const pianoRow = screen.getByRole("article", { name: /弹钢琴/ });
@@ -176,5 +180,29 @@ describe("App", () => {
       });
     });
     expect(within(fishRow).getByText("就绪")).toBeTruthy();
+  });
+
+  it("switches between features and live view tabs", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    // Default view is features — feature rows are visible
+    expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();
+
+    // Live view tab exists and can be clicked
+    const liveTab = screen.getByRole("tab", { name: /实时视图/ });
+    expect(liveTab).toBeTruthy();
+
+    // Switch to live view
+    fireEvent.click(liveTab);
+
+    // Feature rows should be gone, placeholder should appear
+    expect(screen.queryByRole("article", { name: /钓鱼/ })).toBeNull();
+    expect(screen.getByText("请先连接目标窗口")).toBeTruthy();
+
+    // Switch back to features
+    fireEvent.click(screen.getByRole("tab", { name: /功能列表/ }));
+    expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();
+    expect(screen.queryByText("请先连接目标窗口")).toBeNull();
   });
 });

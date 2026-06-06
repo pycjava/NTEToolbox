@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   CheckCircle2,
   Copy,
   Fish,
   Gamepad2,
+  Monitor,
   Music2,
   Pause,
   Pencil,
@@ -47,7 +49,8 @@ import {
   type OptionValue,
   type SelectOptionDefinition,
   type SwitchOptionDefinition,
-  type RunState
+  type RunState,
+  type WindowInfo
 } from "./clientModel";
 
 type DialogFeature = {
@@ -100,6 +103,7 @@ function App() {
   );
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"features" | "live">("features");
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -217,7 +221,14 @@ function App() {
   }
 
   function handleRefreshWindows(gameId: string) {
-    setState((current) => refreshWindows(current, gameId, []));
+    invoke<WindowInfo[]>("enumerate_windows")
+      .then((windows) => {
+        setState((current) => refreshWindows(current, gameId, windows));
+      })
+      .catch((error) => {
+        console.error("Failed to enumerate windows", error);
+        setState((current) => refreshWindows(current, gameId, []));
+      });
   }
 
   function persistClientConfig(nextState: ClientState) {
@@ -281,11 +292,20 @@ function App() {
             />
           ) : null}
 
-          <FeatureList
-            game={selectedGame}
-            onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
-            onRunChange={handleRunChange}
-          />
+          <ViewToggle activeView={activeView} onViewChange={setActiveView} />
+
+          {activeView === "features" ? (
+            <FeatureList
+              game={selectedGame}
+              onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
+              onRunChange={handleRunChange}
+            />
+          ) : (
+            <LiveViewPanel
+              targetWindow={selectedGame.controller?.targetWindow ?? ""}
+              connected={selectedGame.controller?.connected ?? false}
+            />
+          )}
         </section>
       ) : (
         <EmptyState title="尚未添加游戏" />
@@ -344,7 +364,7 @@ function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWin
           >
             <option value="">请选择窗口</option>
             {controller.availableWindows.map((win) => (
-              <option key={win} value={win}>{win}</option>
+              <option key={win.hwnd} value={win.hwnd}>{win.title} ({win.className})</option>
             ))}
           </select>
           <button className="icon-button" type="button" aria-label="刷新窗口列表" title="刷新窗口列表" onClick={() => onRefreshWindows(gameId)}>
@@ -705,6 +725,185 @@ function EmptyState({ title }: { title: string }) {
     <div className="empty-state">
       <Gamepad2 size={34} />
       <h3>{title}</h3>
+    </div>
+  );
+}
+
+type ViewToggleProps = {
+  activeView: "features" | "live";
+  onViewChange: (view: "features" | "live") => void;
+};
+
+function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
+  return (
+    <div className="view-toggle" role="tablist" aria-label="视图切换">
+      <button
+        className={`view-toggle-btn ${activeView === "features" ? "active" : ""}`}
+        role="tab"
+        aria-selected={activeView === "features"}
+        type="button"
+        onClick={() => onViewChange("features")}
+      >
+        <Gamepad2 size={18} />
+        功能列表
+      </button>
+      <button
+        className={`view-toggle-btn ${activeView === "live" ? "active" : ""}`}
+        role="tab"
+        aria-selected={activeView === "live"}
+        type="button"
+        onClick={() => onViewChange("live")}
+      >
+        <Monitor size={18} />
+        实时视图
+      </button>
+    </div>
+  );
+}
+
+type LiveViewPanelProps = {
+  targetWindow: string;
+  connected: boolean;
+};
+
+function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fps, setFps] = useState(10);
+  const [actualFps, setActualFps] = useState(0);
+  const frameTimesRef = useRef<number[]>([]);
+  const unlistenFrameRef = useRef<UnlistenFn | null>(null);
+  const unlistenErrorRef = useRef<UnlistenFn | null>(null);
+  const fpsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 每 500ms 计算一次实际帧率
+  useEffect(() => {
+    fpsTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      // 只保留最近 2 秒的帧时间戳
+      const recent = frameTimesRef.current.filter((t) => now - t < 2000);
+      frameTimesRef.current = recent;
+      if (recent.length >= 2) {
+        const span = (recent[recent.length - 1] - recent[0]) / 1000;
+        setActualFps(Math.round((recent.length - 1) / span));
+      } else {
+        setActualFps(0);
+      }
+    }, 500);
+
+    return () => {
+      if (fpsTimerRef.current) clearInterval(fpsTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!connected || !targetWindow) {
+      setImageSrc(null);
+      setError(null);
+      frameTimesRef.current = [];
+      setActualFps(0);
+      return;
+    }
+
+    let cancelled = false;
+    setImageSrc(null);
+    setError(null);
+    frameTimesRef.current = [];
+    setActualFps(0);
+
+    async function start() {
+      const unlistenFrame = await listen<string>("live-view-frame", (event) => {
+        if (cancelled) return;
+        setImageSrc(`data:image/jpeg;base64,${event.payload}`);
+        setError(null);
+        frameTimesRef.current.push(Date.now());
+      });
+
+      const unlistenError = await listen<string>("live-view-error", (event) => {
+        if (cancelled) return;
+        setError(event.payload);
+      });
+
+      if (cancelled) {
+        unlistenFrame();
+        unlistenError();
+        return;
+      }
+
+      unlistenFrameRef.current = unlistenFrame;
+      unlistenErrorRef.current = unlistenError;
+
+      await invoke("start_live_view", { targetWindow, fps });
+    }
+
+    start();
+
+    return () => {
+      cancelled = true;
+      if (unlistenFrameRef.current) {
+        unlistenFrameRef.current();
+        unlistenFrameRef.current = null;
+      }
+      if (unlistenErrorRef.current) {
+        unlistenErrorRef.current();
+        unlistenErrorRef.current = null;
+      }
+      invoke("stop_live_view").catch((err) => {
+        console.error("Failed to stop live view", err);
+      });
+    };
+  }, [targetWindow, connected, fps]);
+
+  if (!connected || !targetWindow) {
+    return (
+      <div className="live-view-placeholder">
+        <Monitor size={48} />
+        <h3>请先连接目标窗口</h3>
+        <p>在上方选择目标窗口后，实时视图将自动开始</p>
+      </div>
+    );
+  }
+
+  const hasFrames = frameTimesRef.current.length > 0;
+
+  return (
+    <div className="live-view-panel">
+      <div className="live-view-toolbar">
+        <span className="live-view-status">
+          <span className={`status-dot ${error ? "" : "connected"}`} />
+          {error ? "捕获失败" : actualFps > 0 ? `${actualFps} FPS` : "正在连接..."}
+        </span>
+        <div className="live-view-fps">
+          <span className="connection-label">目标帧率</span>
+          <select value={fps} onChange={(e) => setFps(Number(e.target.value))}>
+            <option value={5}>5 FPS</option>
+            <option value={10}>10 FPS</option>
+            <option value={15}>15 FPS</option>
+            <option value={30}>30 FPS</option>
+          </select>
+        </div>
+      </div>
+      <div className="live-view-viewport">
+        {!hasFrames && !error ? (
+          <div className="live-view-placeholder">
+            <RefreshCw size={32} className="spin" />
+            <p>正在捕获第一帧...</p>
+          </div>
+        ) : error && !imageSrc ? (
+          <div className="live-view-error">
+            <p className="live-view-error-msg">{error}</p>
+            <p>等待重试...</p>
+          </div>
+        ) : (
+          imageSrc && (
+            <img
+              src={imageSrc}
+              alt="实时视图"
+              className="live-view-image"
+            />
+          )
+        )}
+      </div>
     </div>
   );
 }

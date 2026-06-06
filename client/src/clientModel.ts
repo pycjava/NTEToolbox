@@ -55,15 +55,24 @@ export type FeatureDefinition = {
   optionValues?: Record<string, OptionValue>;
 };
 
+export type WindowInfo = {
+  /** 窗口句柄（十进制字符串） */
+  hwnd: string;
+  /** 窗口标题 */
+  title: string;
+  /** 窗口类名 */
+  className: string;
+};
+
 export type ControllerState = {
   /** 控制器类型，如 "Win PostMessageWithWindowPos" */
   controllerType: string;
   /** interface.jsonc 中声明的可选控制器类型 */
   controllerTypes?: string[];
-  /** 当前选中的窗口标识（窗口标题或 hwnd） */
+  /** 当前选中的窗口标识（hwnd 十进制字符串） */
   targetWindow: string;
   /** 可选窗口列表 */
-  availableWindows: string[];
+  availableWindows: WindowInfo[];
   /** 连接状态 */
   connected: boolean;
 };
@@ -239,7 +248,7 @@ export function setTargetWindow(
 export function refreshWindows(
   state: ClientState,
   gameId: string,
-  windows: string[]
+  windows: WindowInfo[]
 ): ClientState {
   return {
     ...state,
