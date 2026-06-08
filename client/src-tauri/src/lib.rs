@@ -3,7 +3,9 @@ mod maa_bridge;
 mod window_capture;
 mod window_enumeration;
 
-use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest};
+use maa_bridge::{
+    MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate,
+};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -210,6 +212,16 @@ fn stop_maa_task(
         .stop_task(&game_id, &feature_id)
 }
 
+#[tauri::command]
+fn poll_maa_task_states(
+    runtime: State<'_, Mutex<MaaBridgeRuntime>>,
+) -> Result<Vec<MaaTaskStatusUpdate>, String> {
+    runtime
+        .lock()
+        .map_err(|error| error.to_string())?
+        .poll_task_status_updates()
+}
+
 fn client_debug_log_dir(app: &tauri::App) -> Result<PathBuf, tauri::Error> {
     if let Ok(log_dir) = exe_debug_log_dir() {
         if is_log_dir_writable(&log_dir) {
@@ -303,6 +315,7 @@ pub fn run() {
             save_client_config,
             start_maa_task,
             stop_maa_task,
+            poll_maa_task_states,
             enumerate_windows,
             start_live_view,
             stop_live_view

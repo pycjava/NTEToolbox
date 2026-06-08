@@ -9,7 +9,9 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 #[cfg(windows)]
 use std::{mem, os::windows::io::AsRawHandle, ptr};
@@ -23,6 +25,9 @@ const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x00002000;
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
 #[cfg(windows)]
 const MAA_PROCESS_STOP_EXIT_CODE: u32 = 1;
+const MAA_PROCESS_WAIT_POLL_MS: u64 = 50;
+const MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS: u64 = 1_500;
+const MAA_PROCESS_FORCE_STOP_TIMEOUT_MS: u64 = 3_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,14 +76,25 @@ pub struct MaaTaskRunResponse {
     pub run_state: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaaTaskStatusUpdate {
+    pub game_id: String,
+    pub feature_id: String,
+    pub run_state: String,
+    pub exit_code: Option<i32>,
+}
+
 struct MaaChildProcess {
     child: Child,
+    game_id: String,
+    feature_id: String,
     #[cfg(windows)]
     job: Option<WindowsJob>,
 }
 
 impl MaaChildProcess {
-    fn new(child: Child) -> Self {
+    fn new(child: Child, game_id: String, feature_id: String) -> Self {
         #[cfg(windows)]
         {
             let job = match WindowsJob::assign_child(&child) {
@@ -90,12 +106,21 @@ impl MaaChildProcess {
                     None
                 }
             };
-            return Self { child, job };
+            return Self {
+                child,
+                game_id,
+                feature_id,
+                job,
+            };
         }
 
         #[cfg(not(windows))]
         {
-            Self { child }
+            Self {
+                child,
+                game_id,
+                feature_id,
+            }
         }
     }
 
@@ -114,9 +139,28 @@ impl MaaChildProcess {
         stop_maa_process_tree(self)
     }
 
-    fn wait(&mut self) {
-        let _ = self.child.wait();
+    fn poll_exit(&mut self) -> Result<Option<ExitStatus>, String> {
+        self.child
+            .try_wait()
+            .map_err(|error| format!("Failed to query MaaPiCli process: {error}"))
     }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Result<bool, String> {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            if self.poll_exit()?.is_some() {
+                return Ok(true);
+            }
+
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+
+            thread::sleep(Duration::from_millis(MAA_PROCESS_WAIT_POLL_MS));
+        }
+    }
+
 }
 
 #[derive(Default)]
@@ -173,6 +217,8 @@ impl MaaBridgeRuntime {
             command
                 .spawn()
                 .map_err(|error| format!("Failed to start MaaPiCli: {error}"))?,
+            request.game_id.clone(),
+            request.feature_id.clone(),
         );
 
         // Take stdin ownership, write the "Run tasks" command, then drop to send EOF.
@@ -182,7 +228,9 @@ impl MaaBridgeRuntime {
         // write end is held in the HashMap.
         if let Err(error) = child.send_run_command() {
             let _ = child.stop();
-            child.wait();
+            let _ = child.wait_for_exit(Duration::from_millis(
+                MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
+            ));
             return Err(error);
             // stdin dropped here → MaaPiCli receives EOF
         }
@@ -223,14 +271,59 @@ impl MaaBridgeRuntime {
         }
     }
 
+    pub fn poll_task_status_updates(&mut self) -> Result<Vec<MaaTaskStatusUpdate>, String> {
+        let mut updates = Vec::new();
+
+        for (key, child) in self.children.iter_mut() {
+            let Some(exit_status) = child.poll_exit()? else {
+                continue;
+            };
+
+            updates.push((
+                key.clone(),
+                MaaTaskStatusUpdate {
+                    game_id: child.game_id.clone(),
+                    feature_id: child.feature_id.clone(),
+                    run_state: if exit_status.success() {
+                        "completed".to_string()
+                    } else {
+                        "failed".to_string()
+                    },
+                    exit_code: exit_status.code(),
+                },
+            ));
+        }
+
+        for (key, _) in &updates {
+            self.children.remove(key);
+        }
+
+        Ok(updates.into_iter().map(|(_, update)| update).collect())
+    }
+
     fn stop_task_by_key(&mut self, key: &str) -> Result<(), String> {
         let Some(mut child) = self.children.remove(key) else {
             return Ok(());
         };
 
         let stop_result = child.stop();
-        child.wait();
-        stop_result
+        let wait_result = child.wait_for_exit(Duration::from_millis(
+            MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
+        ));
+
+        match (stop_result, wait_result) {
+            (Ok(()), Ok(true)) => Ok(()),
+            (Ok(()), Ok(false)) => Err("Timed out waiting for MaaPiCli to exit after stop".to_string()),
+            (Ok(()), Err(error)) => Err(error),
+            (Err(stop_error), Ok(true)) => {
+                log::warn!("MaaPiCli stop reported an error after the process exited: {stop_error}");
+                Ok(())
+            }
+            (Err(stop_error), Ok(false)) => Err(format!(
+                "{stop_error}; MaaPiCli is still running after the stop timeout"
+            )),
+            (Err(stop_error), Err(wait_error)) => Err(format!("{stop_error}; {wait_error}")),
+        }
     }
 
     fn ensure_runtime_root(&mut self, app: &AppHandle) -> Result<PathBuf, String> {
@@ -390,73 +483,79 @@ impl Drop for WindowsJob {
 #[cfg(windows)]
 fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
     let pid = process.child.id();
-    let parent_exited = process
-        .child
-        .try_wait()
-        .map_err(|error| format!("Failed to query MaaPiCli process: {error}"))?
-        .is_some();
+    if process.poll_exit()?.is_some() {
+        return Ok(());
+    }
 
     let mut errors = Vec::new();
-    if let Some(job) = &process.job {
-        match job.terminate() {
-            Ok(()) => return Ok(()),
+    let job_terminate_result = process.job.as_ref().map(WindowsJob::terminate);
+    if let Some(result) = job_terminate_result {
+        match result {
+            Ok(()) => {
+                if process.wait_for_exit(Duration::from_millis(
+                    MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS,
+                ))? {
+                    return Ok(());
+                }
+                errors.push("Timed out waiting for MaaPiCli after TerminateJobObject".to_string());
+            }
             Err(error) => errors.push(error),
         }
     }
 
-    if parent_exited {
-        if errors.is_empty() {
-            return Ok(());
-        }
-        return Err(format!(
-            "Failed to stop MaaPiCli process tree: {}",
-            errors.join("; ")
-        ));
+    if process.poll_exit()?.is_some() {
+        return Ok(());
     }
 
-    if let Err(error) = kill_windows_process_tree(pid) {
-        if process
-            .child
-            .try_wait()
-            .map_err(|wait_error| format!("Failed to query MaaPiCli process: {wait_error}"))?
-            .is_some()
-        {
-            if errors.is_empty() {
+    match kill_windows_process_tree(pid) {
+        Ok(()) => {
+            if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
                 return Ok(());
             }
-            return Err(format!(
-                "Failed to stop MaaPiCli process tree: {}",
-                errors.join("; ")
-            ));
+            errors.push("Timed out waiting for MaaPiCli after taskkill".to_string());
         }
-
-        process.child.kill().map_err(|kill_error| {
-            format!(
-                "Failed to stop MaaPiCli process tree: {error}; fallback parent kill failed: {kill_error}"
-            )
-        })?;
-        errors.push(error);
-        return Err(format!(
-            "Failed to stop MaaPiCli process tree: {}; stopped only the parent process",
-            errors.join("; ")
-        ));
+        Err(error) => {
+            if process.poll_exit()?.is_some() {
+                return Ok(());
+            }
+            errors.push(error);
+        }
     }
 
-    Ok(())
+    if process.poll_exit()?.is_some() {
+        return Ok(());
+    }
+
+    process.child.kill().map_err(|kill_error| {
+        format!(
+            "Failed to stop MaaPiCli process tree: {}; fallback parent kill failed: {kill_error}",
+            errors.join("; ")
+        )
+    })?;
+
+    if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
+        errors.push("stopped only the parent process".to_string());
+    } else {
+        errors.push("fallback parent kill did not exit".to_string());
+    }
+
+    Err(format!(
+        "Failed to stop MaaPiCli process tree: {}",
+        errors.join("; ")
+    ))
 }
 
 #[cfg(not(windows))]
 fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
-    if process
-        .child
-        .try_wait()
-        .map_err(|error| format!("Failed to query MaaPiCli process: {error}"))?
-        .is_none()
-    {
+    if process.poll_exit()?.is_none() {
         process
             .child
             .kill()
             .map_err(|error| format!("Failed to stop MaaPiCli process: {error}"))?;
+
+        if !process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
+            return Err("Timed out waiting for MaaPiCli to exit after kill".to_string());
+        }
     }
 
     Ok(())

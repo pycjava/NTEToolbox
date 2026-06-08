@@ -76,6 +76,13 @@ describe("App", () => {
     expect(within(pianoRow).getByText("就绪")).toBeTruthy();
   });
 
+  it("does not show copy configuration actions in the feature list", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: /复制.*配置/ })).toBeNull();
+  });
+
   it("shows global settings in the client settings dialog and saves local values", () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
@@ -180,6 +187,29 @@ describe("App", () => {
       });
     });
     expect(within(fishRow).getByText("就绪")).toBeTruthy();
+  });
+
+  it("updates a feature row when MaaPiCli exits in the background", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "poll_maa_task_states") {
+        return Promise.resolve([
+          {
+            gameId: "nte",
+            featureId: "fish",
+            runState: "completed",
+            exitCode: 0
+          }
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    const fishRow = screen.getAllByRole("article")[0];
+    await waitFor(() => {
+      expect(fishRow.querySelector(".run-completed")).toBeTruthy();
+    });
   });
 
   it("switches between features and live view tabs", () => {

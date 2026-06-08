@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   CheckCircle2,
-  Copy,
   Fish,
   Gamepad2,
   Monitor,
@@ -62,7 +61,15 @@ type MaaTaskRunResponse = {
   runState?: RunState;
 };
 
+type MaaTaskStatusUpdate = {
+  gameId: string;
+  featureId: string;
+  runState: RunState;
+  exitCode?: number | null;
+};
+
 const DEFAULT_RESOURCE_NAME = "默认";
+const MAA_TASK_STATUS_POLL_INTERVAL_MS = 1_000;
 const runningStates = new Set<RunState>(["starting", "running", "paused", "stopping"]);
 
 function getFeatureIcon(featureId: string) {
@@ -124,6 +131,37 @@ function App() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const pollTaskStates = async () => {
+      try {
+        const updates = (await invoke<MaaTaskStatusUpdate[] | null>("poll_maa_task_states")) ?? [];
+        if (cancelled || updates.length === 0) return;
+
+        setState((current) =>
+          updates.reduce(
+            (nextState, update) =>
+              setFeatureRunState(nextState, update.gameId, update.featureId, update.runState),
+            current
+          )
+        );
+      } catch (error) {
+        console.error("Failed to poll Maa task states", error);
+      }
+    };
+
+    void pollTaskStates();
+    const timer = window.setInterval(() => {
+      void pollTaskStates();
+    }, MAA_TASK_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -481,9 +519,6 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
         )}
         <button className="row-icon-button" type="button" aria-label={`编辑${feature.name}`} title="编辑" onClick={() => onConfigure(feature)}>
           <Pencil size={19} />
-        </button>
-        <button className="row-icon-button" type="button" aria-label={`复制${feature.name}配置`} title="复制配置">
-          <Copy size={19} />
         </button>
       </div>
     </article>
