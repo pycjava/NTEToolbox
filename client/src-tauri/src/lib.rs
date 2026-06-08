@@ -242,7 +242,7 @@ fn stop_maa_runtime_on_exit(app: &AppHandle) {
     let runtime = app.state::<Mutex<MaaBridgeRuntime>>();
     match runtime.lock() {
         Ok(mut runtime) => {
-            if let Err(error) = runtime.stop_all_tasks() {
+            if let Err(error) = runtime.stop_all_tasks_with_reason("app_exit") {
                 log::warn!("Failed to stop Maa runtime on app exit: {error}");
             }
         }

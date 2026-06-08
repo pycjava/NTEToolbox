@@ -18,6 +18,7 @@ def stub_maa_modules():
         "agent.maafw_tools",
         "agent.pienv",
         "agent.fish",
+        "agent.rt_asst",
         "agent.utils",
         "agent.virtual_key",
         "maa",
@@ -100,6 +101,21 @@ class DummyRunArg:
     node_name = "钓鱼"
 
 
+class DummyTasker:
+    def __init__(self):
+        self.stopping = False
+        self.controller = object()
+
+
+class DummyRunContext:
+    def __init__(self, attach):
+        self.attach = attach
+        self.tasker = DummyTasker()
+
+    def get_node_object(self, _node_name):
+        return DummyNode(self.attach)
+
+
 def _base_attach(**overrides):
     attach = {
         "终止时间开关": True,
@@ -108,6 +124,9 @@ def _base_attach(**overrides):
         "溜鱼_midpoint_sleep_time": 5,
         "卖鱼买换饵开关": False,
         "买饵次数": 4,
+        "S级鱼截图": False,
+        "金色鱼截图": False,
+        "鱼截图冷却时间": 5,
     }
     attach.update(overrides)
     return attach
@@ -142,6 +161,55 @@ class FishStopTimeTest(unittest.TestCase):
             )
 
             self.assertIsNone(option.终止时间)
+
+    def test_get_option_reads_fish_screenshot_settings(self):
+        with stub_maa_modules():
+            fish = importlib.import_module("agent.fish")
+
+            option = fish.get_option(
+                DummyContext(
+                    _base_attach(
+                        S级鱼截图=True,
+                        金色鱼截图=True,
+                        鱼截图冷却时间=7,
+                    )
+                ),
+                DummyRunArg(),
+            )
+
+            self.assertTrue(option.S级鱼截图)
+            self.assertTrue(option.金色鱼截图)
+            self.assertFalse(hasattr(option, "S级鱼截图保存目录"))
+            self.assertEqual(option.鱼截图冷却时间, 7)
+
+    def test_fishing_saves_fish_screenshot_before_closing_catch_dialog(self):
+        with stub_maa_modules():
+            fish = importlib.import_module("agent.fish")
+            fish_action = fish.Fish()
+            context = DummyRunContext(_base_attach(S级鱼截图=True))
+
+            with (
+                patch.object(fish, "get_img", return_value=object()),
+                patch.object(fish, "reco_上鱼", return_value=False),
+                patch.object(fish, "reco_获鱼", return_value=True),
+                patch.object(fish, "reco_满舱_or_无饵", return_value=None),
+                patch.object(fish, "reco_钓鱼按钮", return_value=False),
+                patch.object(fish.rt_asst, "try_save_fish_screenshot", return_value=True) as try_save,
+                patch.object(fish.time, "sleep", return_value=None),
+            ):
+                context.tasker.controller = type(
+                    "Controller",
+                    (),
+                    {
+                        "post_click_key": lambda self, _key: (
+                            setattr(context.tasker, "stopping", True)
+                            or type("Job", (), {"wait": lambda self: None})()
+                        )
+                    },
+                )()
+                fish_action.run(context, DummyRunArg())
+
+            try_save.assert_called_once()
 
     def test_parse_stop_time_raises_on_missing_终止时长(self):
         with stub_maa_modules():

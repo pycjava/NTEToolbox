@@ -115,13 +115,17 @@ export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
 function buildFishingConfigSummary(values: Record<string, OptionValue>): string {
   const endTimeEnabled = values["钓鱼终止时间开关"] === true;
   const autoBaitEnabled = values["卖鱼买换饵开关"] === true;
+  const sRankScreenshotEnabled = values["钓鱼_S级鱼截图"] === true;
+  const goldenScreenshotEnabled = values["钓鱼_金色鱼截图"] === true;
   const duration = String(values["钓鱼终止时长"] ?? "2小时");
   const baitCount = String(values["买饵次数"] ?? "4");
 
   return [
     `终止时间 ${endTimeEnabled ? duration : "关闭"}`,
     `自动卖鱼买换饵 ${autoBaitEnabled ? "开启" : "关闭"}`,
-    `买饵 ${baitCount}次`
+    `买饵 ${baitCount}次`,
+    `S级鱼截图 ${sRankScreenshotEnabled ? "开启" : "关闭"}`,
+    `金色鱼截图 ${goldenScreenshotEnabled ? "开启" : "关闭"}`
   ].join(" · ");
 }
 
@@ -141,12 +145,10 @@ function buildPianoConfigSummary(values: Record<string, OptionValue>): string {
 function buildAssistConfigSummary(values: Record<string, OptionValue>): string {
   const autoPickupEnabled = values["实时辅助_自动拾取"] === true;
   const alwaysPickupEnabled = autoPickupEnabled && values["实时辅助_自动拾取_永远拾取"] === true;
-  const screenshotEnabled = values["实时辅助_S级鱼截图"] === true;
 
   return [
     `自动拾取 ${autoPickupEnabled ? "开启" : "关闭"}`,
-    `永远拾取 ${alwaysPickupEnabled ? "开启" : "关闭"}`,
-    `S级鱼截图 ${screenshotEnabled ? "开启" : "关闭"}`
+    `永远拾取 ${alwaysPickupEnabled ? "开启" : "关闭"}`
   ].join(" · ");
 }
 

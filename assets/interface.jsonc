@@ -78,7 +78,10 @@
             "钓鱼终止时间开关",
             "溜鱼设置",
             "卖鱼买换饵开关",
-            "卖鱼买换饵设置"
+            "卖鱼买换饵设置",
+            "钓鱼_S级鱼截图",
+            "钓鱼_金色鱼截图",
+            "钓鱼_鱼截图_设置"
          ]
       },
       {
@@ -91,9 +94,7 @@
          "entry": "实时辅助",
          "option": [
             "实时辅助_自动拾取",
-            "实时辅助_自动拾取_永远拾取",
-            "实时辅助_S级鱼截图",
-            "实时辅助_S级鱼截图_设置"
+            "实时辅助_自动拾取_永远拾取"
          ]
       }
    ],
@@ -423,15 +424,15 @@
          ],
          "default_case": "No"
       },
-      "实时辅助_S级鱼截图": {
+      "钓鱼_S级鱼截图": {
          "type": "switch",
          "label": "S级鱼截图",
-         "description": "识别到金色背景光和 S 图标时，自动保存当前截图",
+         "description": "识别到 S 图标时，自动保存当前截图",
          "cases": [
             {
                "name": "Yes",
                "pipeline_override": {
-                  "实时辅助": {
+                  "钓鱼": {
                      "attach": {
                         "S级鱼截图": true
                      }
@@ -441,7 +442,7 @@
             {
                "name": "No",
                "pipeline_override": {
-                  "实时辅助": {
+                  "钓鱼": {
                      "attach": {
                         "S级鱼截图": false
                      }
@@ -451,27 +452,49 @@
          ],
          "default_case": "Yes"
       },
-      "实时辅助_S级鱼截图_设置": {
-         "type": "input",
-         "inputs": [
+      "钓鱼_金色鱼截图": {
+         "type": "switch",
+         "label": "金色鱼截图",
+         "description": "识别到金色背景光时，自动保存当前截图",
+         "cases": [
             {
-               "name": "S级鱼截图保存目录",
-               "label": "S级鱼截图保存目录",
-               "pipeline_type": "string",
-               "default": "screenshots/s_fish"
+               "name": "Yes",
+               "pipeline_override": {
+                  "钓鱼": {
+                     "attach": {
+                        "金色鱼截图": true
+                     }
+                  }
+               }
             },
             {
-               "name": "S级鱼截图冷却时间",
-               "label": "S级鱼截图冷却时间 (秒)",
+               "name": "No",
+               "pipeline_override": {
+                  "钓鱼": {
+                     "attach": {
+                        "金色鱼截图": false
+                     }
+                  }
+               }
+            }
+         ],
+         "default_case": "No"
+      },
+      "钓鱼_鱼截图_设置": {
+         "type": "input",
+         "label": "",
+         "inputs": [
+            {
+               "name": "鱼截图冷却时间",
+               "label": "鱼截图冷却时间 (秒)",
                "pipeline_type": "int",
                "default": "5"
             }
          ],
          "pipeline_override": {
-            "实时辅助": {
+            "钓鱼": {
                "attach": {
-                  "S级鱼截图保存目录": "{S级鱼截图保存目录}",
-                  "S级鱼截图冷却时间": "{S级鱼截图冷却时间}"
+                  "鱼截图冷却时间": "{鱼截图冷却时间}"
                }
             }
          }

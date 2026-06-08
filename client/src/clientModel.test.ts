@@ -68,6 +68,33 @@ const fishOptionDefinitions: Record<string, OptionDefinition> = {
         defaultValue: "4"
       }
     ]
+  },
+  "钓鱼_S级鱼截图": {
+    key: "钓鱼_S级鱼截图",
+    type: "switch",
+    label: "S级鱼截图",
+    description: "识别到 S 图标时，自动保存当前截图",
+    defaultValue: true
+  },
+  "钓鱼_金色鱼截图": {
+    key: "钓鱼_金色鱼截图",
+    type: "switch",
+    label: "金色鱼截图",
+    description: "识别到金色背景光时，自动保存当前截图",
+    defaultValue: false
+  },
+  "钓鱼_鱼截图_设置": {
+    key: "钓鱼_鱼截图_设置",
+    type: "input",
+    label: "",
+    inputs: [
+      {
+        name: "鱼截图冷却时间",
+        label: "鱼截图冷却时间 (秒)",
+        pipelineType: "int",
+        defaultValue: "5"
+      }
+    ]
   }
 };
 
@@ -86,33 +113,6 @@ const assistOptionDefinitions: Record<string, OptionDefinition> = {
     label: "自动拾取 - 永远拾取",
     description: "永远拾取，不判断画面内容。仅在启用自动拾取时有效",
     defaultValue: false
-  },
-  "实时辅助_S级鱼截图": {
-    key: "实时辅助_S级鱼截图",
-    type: "switch",
-    label: "S级鱼截图",
-    description: "识别到金色背景光和 S 图标时，自动保存当前截图",
-    defaultValue: true,
-    enabledOptionKeys: ["实时辅助_S级鱼截图_设置"]
-  },
-  "实时辅助_S级鱼截图_设置": {
-    key: "实时辅助_S级鱼截图_设置",
-    type: "input",
-    label: "",
-    inputs: [
-      {
-        name: "S级鱼截图保存目录",
-        label: "S级鱼截图保存目录",
-        pipelineType: "string",
-        defaultValue: "screenshots/s_fish"
-      },
-      {
-        name: "S级鱼截图冷却时间",
-        label: "S级鱼截图冷却时间 (秒)",
-        pipelineType: "int",
-        defaultValue: "5"
-      }
-    ]
   }
 };
 
@@ -133,14 +133,25 @@ const games: GameDefinition[] = [
         name: "钓鱼",
         description: "自动钓鱼、溜鱼、卖鱼买饵",
         configSummary: "",
-        optionKeys: ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"],
+        optionKeys: [
+          "钓鱼终止时间开关",
+          "溜鱼设置",
+          "卖鱼买换饵开关",
+          "卖鱼买换饵设置",
+          "钓鱼_S级鱼截图",
+          "钓鱼_金色鱼截图",
+          "钓鱼_鱼截图_设置"
+        ],
         optionValues: {
           "钓鱼终止时间开关": true,
           "钓鱼终止时长": "2小时",
           "溜鱼_midpoint_pix_range": "5",
           "溜鱼_midpoint_sleep_time": "5",
           "卖鱼买换饵开关": true,
-          "买饵次数": "4"
+          "买饵次数": "4",
+          "钓鱼_S级鱼截图": true,
+          "钓鱼_金色鱼截图": false,
+          "鱼截图冷却时间": "5"
         }
       },
       {
@@ -160,15 +171,12 @@ const games: GameDefinition[] = [
       {
         id: "assist",
         name: "实时辅助",
-        description: "自动拾取、S 级鱼截图",
+        description: "自动拾取",
         configSummary: "",
-        optionKeys: ["实时辅助_自动拾取", "实时辅助_S级鱼截图"],
+        optionKeys: ["实时辅助_自动拾取"],
         optionValues: {
           "实时辅助_自动拾取": true,
-          "实时辅助_自动拾取_永远拾取": false,
-          "实时辅助_S级鱼截图": true,
-          "S级鱼截图保存目录": "screenshots/s_fish",
-          "S级鱼截图冷却时间": "5"
+          "实时辅助_自动拾取_永远拾取": false
         }
       }
     ]
@@ -255,9 +263,12 @@ describe("client model", () => {
       "溜鱼_midpoint_pix_range": "5",
       "溜鱼_midpoint_sleep_time": "5",
       "卖鱼买换饵开关": true,
-      "买饵次数": "4"
+      "买饵次数": "4",
+      "钓鱼_S级鱼截图": true,
+      "钓鱼_金色鱼截图": false,
+      "鱼截图冷却时间": "5"
     });
-    expect(fish.configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
+    expect(fish.configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 开启 · 买饵 4次 · S级鱼截图 开启 · 金色鱼截图 关闭");
   });
 
   it("updates fishing duration in option values and summary", () => {
@@ -266,7 +277,7 @@ describe("client model", () => {
     const fish = next.games[0].features[0];
 
     expect(fish.optionValues?.["钓鱼终止时长"]).toBe("4小时");
-    expect(fish.configSummary).toBe("终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次");
+    expect(fish.configSummary).toBe("终止时间 4小时 · 自动卖鱼买换饵 开启 · 买饵 4次 · S级鱼截图 开启 · 金色鱼截图 关闭");
   });
 
   it("hides fishing duration when end time is disabled", () => {
@@ -275,7 +286,7 @@ describe("client model", () => {
     const fish = next.games[0].features[0];
 
     expect(getVisibleOptionKeys(fish.optionKeys ?? [], fishOptionDefinitions, fish.optionValues ?? {})).not.toContain("钓鱼终止时长");
-    expect(fish.configSummary).toBe("终止时间 关闭 · 自动卖鱼买换饵 开启 · 买饵 4次");
+    expect(fish.configSummary).toBe("终止时间 关闭 · 自动卖鱼买换饵 开启 · 买饵 4次 · S级鱼截图 开启 · 金色鱼截图 关闭");
   });
 
   it("saves fishing midpoint inputs", () => {
@@ -297,7 +308,34 @@ describe("client model", () => {
     const state = buildState();
     const next = setFeatureOptionValue(state, "nte", "fish", "卖鱼买换饵开关", false);
 
-    expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 关闭 · 买饵 4次");
+    expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 关闭 · 买饵 4次 · S级鱼截图 开启 · 金色鱼截图 关闭");
+  });
+
+  it("updates fishing summary when S-rank screenshot is disabled", () => {
+    const state = buildState();
+    const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼_S级鱼截图", false);
+
+    expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 开启 · 买饵 4次 · S级鱼截图 关闭 · 金色鱼截图 关闭");
+  });
+
+  it("updates fishing summary when golden fish screenshot is enabled", () => {
+    const state = buildState();
+    const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼_金色鱼截图", true);
+
+    expect(next.games[0].features[0].configSummary).toBe("终止时间 2小时 · 自动卖鱼买换饵 开启 · 买饵 4次 · S级鱼截图 开启 · 金色鱼截图 开启");
+  });
+
+  it("keeps fishing screenshot settings visible when its switch is disabled", () => {
+    const state = buildState();
+    const next = setFeatureOptionValue(state, "nte", "fish", "钓鱼_S级鱼截图", false);
+    const fish = next.games[0].features[0];
+    const visibleOptionKeys = getVisibleOptionKeys(
+      fish.optionKeys ?? [],
+      fishOptionDefinitions,
+      fish.optionValues ?? {}
+    );
+
+    expect(visibleOptionKeys).toContain("钓鱼_鱼截图_设置");
   });
 
   it("initializes piano keyboard input options", () => {
@@ -329,19 +367,15 @@ describe("client model", () => {
 
     expect(assist.optionValues).toMatchObject({
       "实时辅助_自动拾取": true,
-      "实时辅助_自动拾取_永远拾取": false,
-      "实时辅助_S级鱼截图": true,
-      "S级鱼截图保存目录": "screenshots/s_fish",
-      "S级鱼截图冷却时间": "5"
+      "实时辅助_自动拾取_永远拾取": false
     });
-    expect(assist.configSummary).toBe("自动拾取 开启 · 永远拾取 关闭 · S级鱼截图 开启");
+    expect(assist.configSummary).toBe("自动拾取 开启 · 永远拾取 关闭");
   });
 
   it("hides realtime assist dependent settings when their switches are disabled", () => {
     const state = buildState();
     const withoutPickup = setFeatureOptionValue(state, "nte", "assist", "实时辅助_自动拾取", false);
-    const withoutScreenshot = setFeatureOptionValue(withoutPickup, "nte", "assist", "实时辅助_S级鱼截图", false);
-    const assist = withoutScreenshot.games[0].features[2];
+    const assist = withoutPickup.games[0].features[2];
     const visibleOptionKeys = getVisibleOptionKeys(
       assist.optionKeys ?? [],
       assistOptionDefinitions,
@@ -349,7 +383,8 @@ describe("client model", () => {
     );
 
     expect(visibleOptionKeys).not.toContain("实时辅助_自动拾取_永远拾取");
+    expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图");
     expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图_设置");
-    expect(assist.configSummary).toBe("自动拾取 关闭 · 永远拾取 关闭 · S级鱼截图 关闭");
+    expect(assist.configSummary).toBe("自动拾取 关闭 · 永远拾取 关闭");
   });
 });

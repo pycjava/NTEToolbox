@@ -47,7 +47,21 @@ describe("App", () => {
     expect(within(dialog).getByDisplayValue("1")).toBeTruthy();
   });
 
-  it("opens realtime assist configuration with pickup and screenshot controls", () => {
+  it("opens fishing configuration with independent fish screenshot controls", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑钓鱼" }));
+
+    const dialog = screen.getByRole("dialog", { name: "钓鱼" });
+    expect(within(dialog).getByText("S级鱼截图")).toBeTruthy();
+    expect(within(dialog).getByText("金色鱼截图")).toBeTruthy();
+    expect(within(dialog).queryByLabelText("S级鱼截图保存目录")).toBeNull();
+    expect(within(dialog).queryByDisplayValue("screenshots/s_fish")).toBeNull();
+    expect(within(dialog).getByLabelText("鱼截图冷却时间 (秒)")).toHaveProperty("value", "5");
+  });
+
+  it("opens realtime assist configuration with pickup controls only", () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
 
@@ -56,9 +70,8 @@ describe("App", () => {
     const dialog = screen.getByRole("dialog", { name: "实时辅助" });
     expect(within(dialog).getByText("自动拾取")).toBeTruthy();
     expect(within(dialog).getByText("自动拾取 - 永远拾取")).toBeTruthy();
-    expect(within(dialog).getByText("S级鱼截图")).toBeTruthy();
-    expect(within(dialog).getByDisplayValue("screenshots/s_fish")).toBeTruthy();
-    expect(within(dialog).getByDisplayValue("5")).toBeTruthy();
+    expect(within(dialog).queryByText("S级鱼截图")).toBeNull();
+    expect(within(dialog).queryByDisplayValue("screenshots/s_fish")).toBeNull();
   });
 
   it("keeps running state inline on the feature row after launch", () => {
@@ -162,11 +175,17 @@ describe("App", () => {
             "钓鱼终止时间开关",
             "溜鱼设置",
             "卖鱼买换饵开关",
-            "卖鱼买换饵设置"
+            "卖鱼买换饵设置",
+            "钓鱼_S级鱼截图",
+            "钓鱼_金色鱼截图",
+            "钓鱼_鱼截图_设置"
           ],
           optionValues: expect.objectContaining({
             "钓鱼终止时间开关": false,
-            "买饵次数": "4"
+            "买饵次数": "4",
+            "钓鱼_S级鱼截图": true,
+            "钓鱼_金色鱼截图": false,
+            "鱼截图冷却时间": "5"
           }),
           globalOptionKey: "全局设置",
           globalSettingsValues: expect.objectContaining({
@@ -176,6 +195,8 @@ describe("App", () => {
         })
       });
     });
+    const startCall = invokeMock.mock.calls.find(([command]) => command === "start_maa_task");
+    expect(startCall?.[1]?.request.optionValues).not.toHaveProperty("S级鱼截图保存目录");
     expect(within(fishRow).getByText("运行中")).toBeTruthy();
 
     fireEvent.click(within(fishRow).getByRole("button", { name: "结束任务" }));

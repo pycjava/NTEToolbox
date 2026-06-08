@@ -93,12 +93,13 @@ export function applyPersistedClientConfig(
         features: game.features.map((feature) => {
           const savedFeature = savedGame.features?.[feature.id];
           if (!savedFeature) return feature;
+          const savedOptionValues = omitStaleOptionValues(savedFeature.optionValues ?? {});
 
           const nextFeature = {
             ...feature,
             optionValues: {
               ...(feature.optionValues ?? {}),
-              ...(savedFeature.optionValues ?? {})
+              ...savedOptionValues
             }
           };
 
@@ -110,6 +111,19 @@ export function applyPersistedClientConfig(
       };
     })
   };
+}
+
+function omitStaleOptionValues(optionValues: Record<string, OptionValue>): Record<string, OptionValue> {
+  const nextOptionValues = { ...optionValues };
+  if (
+    nextOptionValues["鱼截图冷却时间"] === undefined &&
+    nextOptionValues["S级鱼截图冷却时间"] !== undefined
+  ) {
+    nextOptionValues["鱼截图冷却时间"] = nextOptionValues["S级鱼截图冷却时间"];
+  }
+  delete nextOptionValues["S级鱼截图保存目录"];
+  delete nextOptionValues["S级鱼截图冷却时间"];
+  return nextOptionValues;
 }
 
 export function buildFeaturePipelineOverride(
