@@ -1,12 +1,15 @@
+use crate::debug_log::resolve_debug_log_dir;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -160,7 +163,6 @@ impl MaaChildProcess {
             thread::sleep(Duration::from_millis(MAA_PROCESS_WAIT_POLL_MS));
         }
     }
-
 }
 
 #[derive(Default)]
@@ -179,36 +181,35 @@ impl MaaBridgeRuntime {
         self.stop_task_by_key(&key)?;
 
         let runtime_root = self.ensure_runtime_root(app)?;
+        let debug_log_dir = resolve_bridge_debug_log_dir(app)?;
+        prepare_runtime_debug_dir(&runtime_root, &debug_log_dir)?;
+        migrate_legacy_bridge_log_dir(&runtime_root, &debug_log_dir)?;
 
         // Debug: dump the raw option_definitions received from the frontend
         {
-            let debug_path = runtime_root.join("log");
-            let _ = fs::create_dir_all(&debug_path);
+            let _ = fs::create_dir_all(&debug_log_dir);
             let defs_json = serde_json::to_string_pretty(&request.option_definitions)
                 .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
-            let _ = fs::write(debug_path.join("debug_option_definitions.json"), defs_json);
+            let _ = fs::write(
+                debug_log_dir.join("debug_option_definitions.json"),
+                defs_json,
+            );
         }
 
         write_maa_pi_config(&runtime_root, request)?;
 
-        // In debug builds stderr is inherited so agent/MaaPiCli logs appear in the
-        // `pnpm tauri dev` terminal.  In release builds logs go to a file instead.
-        let stderr_config: Stdio = if cfg!(debug_assertions) {
-            Stdio::inherit()
-        } else {
-            let log_dir = runtime_root.join("log");
-            let _ = fs::create_dir_all(&log_dir);
-            let stderr_file = File::create(log_dir.join("maapicli_stderr.log"))
-                .map_err(|error| format!("Failed to create MaaPiCli log file: {error}"))?;
-            Stdio::from(stderr_file)
-        };
+        let stderr_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(debug_log_dir.join("maapicli_stderr.log"))
+            .map_err(|error| format!("Failed to create MaaPiCli log file: {error}"))?;
 
         let mut command = Command::new(runtime_root.join("MaaPiCli.exe"));
         command
             .current_dir(&runtime_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(stderr_config);
+            .stderr(Stdio::from(stderr_file));
 
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
@@ -228,9 +229,7 @@ impl MaaBridgeRuntime {
         // write end is held in the HashMap.
         if let Err(error) = child.send_run_command() {
             let _ = child.stop();
-            let _ = child.wait_for_exit(Duration::from_millis(
-                MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
-            ));
+            let _ = child.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS));
             return Err(error);
             // stdin dropped here → MaaPiCli receives EOF
         }
@@ -307,16 +306,19 @@ impl MaaBridgeRuntime {
         };
 
         let stop_result = child.stop();
-        let wait_result = child.wait_for_exit(Duration::from_millis(
-            MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
-        ));
+        let wait_result =
+            child.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS));
 
         match (stop_result, wait_result) {
             (Ok(()), Ok(true)) => Ok(()),
-            (Ok(()), Ok(false)) => Err("Timed out waiting for MaaPiCli to exit after stop".to_string()),
+            (Ok(()), Ok(false)) => {
+                Err("Timed out waiting for MaaPiCli to exit after stop".to_string())
+            }
             (Ok(()), Err(error)) => Err(error),
             (Err(stop_error), Ok(true)) => {
-                log::warn!("MaaPiCli stop reported an error after the process exited: {stop_error}");
+                log::warn!(
+                    "MaaPiCli stop reported an error after the process exited: {stop_error}"
+                );
                 Ok(())
             }
             (Err(stop_error), Ok(false)) => Err(format!(
@@ -492,9 +494,9 @@ fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
     if let Some(result) = job_terminate_result {
         match result {
             Ok(()) => {
-                if process.wait_for_exit(Duration::from_millis(
-                    MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS,
-                ))? {
+                if process
+                    .wait_for_exit(Duration::from_millis(MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS))?
+                {
                     return Ok(());
                 }
                 errors.push("Timed out waiting for MaaPiCli after TerminateJobObject".to_string());
@@ -673,6 +675,185 @@ fn ensure_maa_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
 
     prepare_dev_runtime_root(&repo_root, &runtime_root)?;
     Ok(runtime_root)
+}
+
+fn resolve_bridge_debug_log_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_local_data_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    Ok(resolve_debug_log_dir(app_local_data_dir))
+}
+
+fn prepare_runtime_debug_dir(runtime_root: &Path, shared_debug_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(shared_debug_dir)
+        .map_err(|error| format!("Failed to create shared debug directory: {error}"))?;
+
+    let runtime_debug_dir = runtime_root.join("debug");
+    if paths_point_to_same_location(&runtime_debug_dir, shared_debug_dir) {
+        return Ok(());
+    }
+
+    if fs::symlink_metadata(&runtime_debug_dir).is_ok() {
+        if paths_point_to_same_location(&runtime_debug_dir, shared_debug_dir) {
+            return Ok(());
+        }
+
+        if is_link_like_dir(&runtime_debug_dir) {
+            remove_link_like_dir(&runtime_debug_dir)?;
+        } else {
+            move_dir_contents(&runtime_debug_dir, shared_debug_dir)?;
+            fs::remove_dir_all(&runtime_debug_dir).map_err(|error| {
+                format!("Failed to remove runtime debug directory before redirecting logs: {error}")
+            })?;
+        }
+    }
+
+    create_debug_dir_redirect(&runtime_debug_dir, shared_debug_dir)
+}
+
+fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+#[cfg(windows)]
+fn is_link_like_dir(path: &Path) -> bool {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    fs::symlink_metadata(path)
+        .map(|metadata| (metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_link_like_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn remove_link_like_dir(path: &Path) -> Result<(), String> {
+    fs::remove_dir(path)
+        .or_else(|_| fs::remove_file(path))
+        .map_err(|error| format!("Failed to remove existing runtime debug link: {error}"))
+}
+
+#[cfg(windows)]
+fn create_debug_dir_redirect(link_path: &Path, target_path: &Path) -> Result<(), String> {
+    if let Some(parent) = link_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create runtime debug parent directory: {error}"))?;
+    }
+
+    let mut command = Command::new("cmd");
+    command
+        .args(["/C", "mklink", "/J"])
+        .arg(link_path)
+        .arg(target_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let status = command
+        .status()
+        .map_err(|error| format!("Failed to create runtime debug junction: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "mklink failed while redirecting Maa logs: {status}"
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn create_debug_dir_redirect(link_path: &Path, target_path: &Path) -> Result<(), String> {
+    if let Some(parent) = link_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create runtime debug parent directory: {error}"))?;
+    }
+
+    std::os::unix::fs::symlink(target_path, link_path)
+        .map_err(|error| format!("Failed to create runtime debug symlink: {error}"))
+}
+
+fn move_dir_contents(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| format!("Failed to create {target:?}: {error}"))?;
+
+    for entry in
+        fs::read_dir(source).map_err(|error| format!("Failed to read {source:?}: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            move_dir_contents(&source_path, &target_path)?;
+            fs::remove_dir_all(&source_path).map_err(|error| {
+                format!("Failed to remove moved directory {source_path:?}: {error}")
+            })?;
+        } else {
+            let target_path = available_target_path(&target_path);
+            match fs::rename(&source_path, &target_path) {
+                Ok(()) => {}
+                Err(_) => {
+                    fs::copy(&source_path, &target_path).map_err(|error| {
+                        format!("Failed to copy {source_path:?} to {target_path:?}: {error}")
+                    })?;
+                    fs::remove_file(&source_path).map_err(|error| {
+                        format!("Failed to remove moved file {source_path:?}: {error}")
+                    })?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn available_target_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "log".to_string());
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy());
+
+    for index in 1.. {
+        let file_name = match &extension {
+            Some(extension) => format!("{stem}-{index}.{extension}"),
+            None => format!("{stem}-{index}"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!()
+}
+
+fn migrate_legacy_bridge_log_dir(
+    runtime_root: &Path,
+    shared_debug_dir: &Path,
+) -> Result<(), String> {
+    let legacy_log_dir = runtime_root.join("log");
+    if !legacy_log_dir.is_dir() || paths_point_to_same_location(&legacy_log_dir, shared_debug_dir) {
+        return Ok(());
+    }
+
+    move_dir_contents(&legacy_log_dir, shared_debug_dir)?;
+    fs::remove_dir_all(&legacy_log_dir)
+        .map_err(|error| format!("Failed to remove legacy bridge log directory: {error}"))
 }
 
 fn runtime_source_candidates(app: &AppHandle) -> Vec<PathBuf> {
@@ -1077,6 +1258,21 @@ fn parse_window_id(target_window: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_runtime_debug_dir_with_shared_debug_link() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime_root = temp.path().join("runtime");
+        let shared_debug_dir = temp.path().join("install").join("debug");
+        fs::create_dir_all(runtime_root.join("debug")).expect("runtime debug dir");
+        fs::write(runtime_root.join("debug").join("old.log"), "old").expect("old log");
+
+        prepare_runtime_debug_dir(&runtime_root, &shared_debug_dir).expect("prepare debug dir");
+        fs::write(runtime_root.join("debug").join("probe.log"), "probe").expect("probe log");
+
+        assert!(shared_debug_dir.join("old.log").is_file());
+        assert!(shared_debug_dir.join("probe.log").is_file());
+    }
 
     fn request() -> MaaTaskStartRequest {
         MaaTaskStartRequest {

@@ -1,14 +1,13 @@
 mod client_config;
+mod debug_log;
 mod maa_bridge;
 mod window_capture;
 mod window_enumeration;
 
-use maa_bridge::{
-    MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate,
-};
+use debug_log::resolve_debug_log_dir;
+use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate};
 use serde_json::Value;
-use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -223,43 +222,7 @@ fn poll_maa_task_states(
 }
 
 fn client_debug_log_dir(app: &tauri::App) -> Result<PathBuf, tauri::Error> {
-    if let Ok(log_dir) = exe_debug_log_dir() {
-        if is_log_dir_writable(&log_dir) {
-            return Ok(log_dir);
-        }
-    }
-
-    Ok(app
-        .path()
-        .app_local_data_dir()?
-        .join("maa-runtime")
-        .join("debug"))
-}
-
-fn exe_debug_log_dir() -> Result<PathBuf, std::io::Error> {
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .map(|path| path.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    Ok(exe_dir.join("debug"))
-}
-
-fn is_log_dir_writable(path: &Path) -> bool {
-    if fs::create_dir_all(path).is_err() {
-        return false;
-    }
-
-    let probe_path = path.join(".ntetoolbox-log-write-test");
-    let writable = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&probe_path)
-        .is_ok();
-    let _ = fs::remove_file(probe_path);
-
-    writable
+    Ok(resolve_debug_log_dir(app.path().app_local_data_dir()?))
 }
 
 fn client_log_targets(debug_log_dir: PathBuf) -> Vec<Target> {
