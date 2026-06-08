@@ -71,8 +71,8 @@ describe("App", () => {
     fireEvent.click(within(fishRow).getByRole("button", { name: "启动" }));
 
     expect(within(fishRow).getByText("运行中")).toBeTruthy();
-    expect(within(fishRow).getByRole("button", { name: "暂停" })).toBeTruthy();
-    expect(within(fishRow).getByRole("button", { name: "停止" })).toBeTruthy();
+    expect(within(fishRow).queryByRole("button", { name: "暂停" })).toBeNull();
+    expect(within(fishRow).getByRole("button", { name: "结束任务" })).toBeTruthy();
     expect(within(pianoRow).getByText("就绪")).toBeTruthy();
   });
 
@@ -178,7 +178,7 @@ describe("App", () => {
     });
     expect(within(fishRow).getByText("运行中")).toBeTruthy();
 
-    fireEvent.click(within(fishRow).getByRole("button", { name: "停止" }));
+    fireEvent.click(within(fishRow).getByRole("button", { name: "结束任务" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("stop_maa_task", {

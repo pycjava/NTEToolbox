@@ -1,5 +1,5 @@
 export type GameStatus = "ready" | "placeholder";
-export type RunState = "idle" | "starting" | "running" | "paused" | "stopping" | "completed" | "failed";
+export type RunState = "idle" | "starting" | "running" | "stopping" | "completed" | "failed";
 export type OptionValue = boolean | string;
 export type PipelineOverride = Record<string, unknown>;
 

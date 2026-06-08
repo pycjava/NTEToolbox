@@ -381,7 +381,6 @@ h3 {
 }
 
 .run-running,
-.run-paused,
 .run-starting,
 .run-stopping {
   background: var(--color-primary-soft);

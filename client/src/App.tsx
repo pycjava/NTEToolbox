@@ -7,7 +7,6 @@ import {
   Gamepad2,
   Monitor,
   Music2,
-  Pause,
   Pencil,
   Play,
   HelpCircle,
@@ -70,7 +69,7 @@ type MaaTaskStatusUpdate = {
 
 const DEFAULT_RESOURCE_NAME = "默认";
 const MAA_TASK_STATUS_POLL_INTERVAL_MS = 1_000;
-const runningStates = new Set<RunState>(["starting", "running", "paused", "stopping"]);
+const runningStates = new Set<RunState>(["starting", "running", "stopping"]);
 
 function getFeatureIcon(featureId: string) {
   if (featureId === "fish") return Fish;
@@ -85,10 +84,8 @@ function getRunLabel(runState: RunState | undefined) {
       return "启动中";
     case "running":
       return "运行中";
-    case "paused":
-      return "已暂停";
     case "stopping":
-      return "停止中";
+      return "结束中";
     case "completed":
       return "已完成";
     case "failed":
@@ -501,16 +498,10 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
       </div>
       <div className="feature-actions">
         {isRunning ? (
-          <>
-            <button className="secondary-action" type="button" onClick={() => onRunChange(gameId, feature.id, "paused")}>
-              <Pause size={17} />
-              暂停
-            </button>
-            <button className="secondary-action danger" type="button" onClick={() => onRunChange(gameId, feature.id, "idle")}>
-              <Square size={16} />
-              停止
-            </button>
-          </>
+          <button className="secondary-action danger" type="button" onClick={() => onRunChange(gameId, feature.id, "idle")}>
+            <Square size={16} />
+            结束任务
+          </button>
         ) : (
           <button className="primary-action" type="button" onClick={() => onRunChange(gameId, feature.id, "running")}>
             <Play size={17} />
