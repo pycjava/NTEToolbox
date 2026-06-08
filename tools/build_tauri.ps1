@@ -437,6 +437,22 @@ if (Test-Path $bundleDir) {
     }
 }
 
+# Cleanup PyInstaller's temporary dist output after Tauri has consumed agent.exe.
+$agentDistDir = Join-Path $repoRoot "dist"
+if (Test-Path -LiteralPath $agentDistDir -PathType Container) {
+    $resolvedAgentDistDir = [System.IO.Path]::GetFullPath($agentDistDir).Replace("/", "\").TrimEnd([char[]] "\")
+    $resolvedOutputDir = [System.IO.Path]::GetFullPath($OutputDir).Replace("/", "\").TrimEnd([char[]] "\")
+    $outputInsideAgentDist = ($resolvedOutputDir -ieq $resolvedAgentDistDir) -or
+        $resolvedOutputDir.StartsWith("$resolvedAgentDistDir\", [System.StringComparison]::OrdinalIgnoreCase)
+
+    if ($outputInsideAgentDist) {
+        Write-Host "       Skipped cleanup of $agentDistDir because OutputDir is inside it." -ForegroundColor Yellow
+    } else {
+        Remove-Item -LiteralPath $agentDistDir -Recurse -Force
+        Write-Host "       Cleaned up $agentDistDir" -ForegroundColor DarkGray
+    }
+}
+
 # Summary
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
