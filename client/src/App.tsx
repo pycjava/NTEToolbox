@@ -3,8 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   CheckCircle2,
+  Download,
   Fish,
   Gamepad2,
+  Library,
+  Loader2,
   Monitor,
   Music2,
   Pencil,
@@ -67,6 +70,23 @@ type MaaTaskStatusUpdate = {
   exitCode?: number | null;
 };
 
+type MutopiaMidiEntry = {
+  id: string;
+  title: string;
+  composer: string;
+  instrument: string;
+  style: string;
+  license: string;
+  midiUrl: string;
+  sourceUrl: string;
+};
+
+type DownloadedMidiEntry = {
+  fileName: string;
+  displayName: string;
+  filePath: string;
+};
+
 const DEFAULT_RESOURCE_NAME = "默认";
 const MAA_TASK_STATUS_POLL_INTERVAL_MS = 1_000;
 const runningStates = new Set<RunState>(["starting", "running", "stopping"]);
@@ -107,7 +127,8 @@ function App() {
   );
   const [configTarget, setConfigTarget] = useState<DialogFeature | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"features" | "live">("features");
+  const [activeView, setActiveView] = useState<"features" | "live" | "library">("features");
+  const [mutopiaCache, setMutopiaCache] = useState<MutopiaMidiEntry[] | null>(null);
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -335,6 +356,13 @@ function App() {
               onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
               onRunChange={handleRunChange}
             />
+          ) : activeView === "library" ? (
+            <div className="mutopia-panel">
+              <MutopiaMidiBrowser
+                cachedEntries={mutopiaCache}
+                onCacheUpdate={setMutopiaCache}
+              />
+            </div>
           ) : (
             <LiveViewPanel
               targetWindow={selectedGame.controller?.targetWindow ?? ""}
@@ -547,6 +575,10 @@ function FeatureConfigDialog({ optionDefinitions, target, onClose, onSave }: Fea
           </button>
         </div>
 
+        {target.feature.id === "piano" ? (
+          <PianoTrackSelector value={String(values.midi_path ?? "")} onChange={(path) => updateValue("midi_path", path)} />
+        ) : null}
+
         {visibleOptionKeys.length > 0 ? (
           <div className="config-grid">
             {visibleOptionKeys.map((optionKey) => {
@@ -596,6 +628,185 @@ function OptionField({ option, values, onChange }: OptionFieldProps) {
   }
 
   return <InputOption option={option} values={values} onChange={onChange} />;
+}
+
+function PianoTrackSelector({ value, onChange }: { value: string; onChange: (path: string) => void }) {
+  const [files, setFiles] = useState<DownloadedMidiEntry[]>([]);
+
+  function refresh() {
+    invoke<DownloadedMidiEntry[]>("list_downloaded_midi")
+      .then((result) => setFiles(result ?? []))
+      .catch(() => setFiles([]));
+  }
+
+  useEffect(() => { refresh(); }, []);
+
+  return (
+    <div className="field-group">
+      <span>选择曲目</span>
+      <div className="midi-select">
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {files.length === 0 ? (
+            <option value="">请先在 MIDI 曲库中下载曲目</option>
+          ) : (
+            <option value="">请选择曲目</option>
+          )}
+          {files.map((file) => (
+            <option key={file.filePath} value={file.filePath}>
+              {file.displayName}
+            </option>
+          ))}
+        </select>
+        <button className="icon-button" type="button" aria-label="刷新列表" title="刷新列表" onClick={refresh}>
+          <RefreshCw size={18} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MutopiaMidiBrowser({
+  cachedEntries,
+  onCacheUpdate,
+}: {
+  cachedEntries: MutopiaMidiEntry[] | null;
+  onCacheUpdate: (entries: MutopiaMidiEntry[]) => void;
+}) {
+  const hasCache = cachedEntries !== null && cachedEntries.length > 0;
+  const [entries, setEntries] = useState<MutopiaMidiEntry[]>(() => cachedEntries ?? []);
+  const [status, setStatus] = useState<"idle" | "loading" | "failed" | "loaded">(() =>
+    hasCache ? "loaded" : "idle"
+  );
+  const [error, setError] = useState("");
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    invoke<DownloadedMidiEntry[]>("list_downloaded_midi")
+      .then((files) => {
+        setDownloadedIds(new Set((files ?? []).map((f) => f.fileName)));
+      })
+      .catch(() => { /* ignore — no downloaded files yet */ });
+  }, []);
+
+  // 首次挂载且无缓存时自动加载
+  useEffect(() => {
+    if (!hasCache) {
+      void loadEntries();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadEntries() {
+    setStatus("loading");
+    setError("");
+    try {
+      const result = await invoke<MutopiaMidiEntry[]>("list_mutopia_public_domain_midi");
+      setEntries(result ?? []);
+      onCacheUpdate(result ?? []);
+      setStatus("loaded");
+    } catch (loadError) {
+      setError(String(loadError));
+      setStatus("failed");
+    }
+  }
+
+  async function downloadEntry(entry: MutopiaMidiEntry) {
+    setDownloadingId(entry.id);
+    setError("");
+    try {
+      await invoke<string>("download_mutopia_midi", {
+        request: {
+          title: entry.title,
+          composer: entry.composer,
+          license: entry.license,
+          midiUrl: entry.midiUrl
+        }
+      });
+      setDownloadedIds((prev) => new Set(prev).add(entry.id));
+    } catch (downloadError) {
+      setError(String(downloadError));
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  const filteredEntries = searchQuery.trim()
+    ? entries.filter((entry) => {
+        const q = searchQuery.toLowerCase();
+        return [entry.title, entry.composer, entry.style].some((field) => field.toLowerCase().includes(q));
+      })
+    : entries;
+
+  return (
+    <section className="mutopia-browser" aria-labelledby="mutopia-browser-title">
+      <div className="mutopia-header">
+        <div>
+          <h3 id="mutopia-browser-title">Mutopia 公共领域 MIDI</h3>
+          <p>Public Domain only · mutopiaproject.org</p>
+        </div>
+        <button className="secondary-action" type="button" onClick={loadEntries} disabled={status === "loading"}>
+          {status === "loading" ? <Loader2 size={16} className="spin" /> : <Library size={16} />}
+          {hasCache ? "刷新曲库" : "加载曲库"}
+        </button>
+      </div>
+
+      {entries.length > 0 ? (
+        <div className="mutopia-search">
+          <input
+            type="text"
+            placeholder="搜索曲名、作曲家、风格..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+        </div>
+      ) : null}
+
+      {error ? <p className="mutopia-error">{error}</p> : null}
+
+      {filteredEntries.length > 0 ? (
+        <div className="mutopia-list">
+          {filteredEntries.map((entry) => {
+            const isDownloaded = downloadedIds.has(entry.id);
+            return (
+              <article className="mutopia-item" key={entry.id}>
+                <div className="mutopia-copy">
+                  <div className="mutopia-title-line">
+                    <h4>{entry.title}</h4>
+                    <span>{entry.license}</span>
+                  </div>
+                  <p>{[entry.composer, entry.instrument, entry.style].filter(Boolean).join(" · ")}</p>
+                </div>
+                <div className="mutopia-actions">
+                  {isDownloaded ? (
+                    <span className="mutopia-downloaded-badge">已下载 ✓</span>
+                  ) : (
+                    <button
+                      className="primary-action compact-action"
+                      type="button"
+                      disabled={downloadingId !== null}
+                      aria-label={`下载 ${entry.title}`}
+                      onClick={() => { void downloadEntry(entry); }}
+                    >
+                      {downloadingId === entry.id ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+                      下载
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mutopia-empty">
+          {status === "loaded" && searchQuery.trim() ? "没有匹配的曲目。" : status === "loaded" ? "没有可用的 Public Domain MIDI。" : " "}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function OptionLabel({ label, description }: { label: string; description?: string }) {
@@ -756,8 +967,8 @@ function EmptyState({ title }: { title: string }) {
 }
 
 type ViewToggleProps = {
-  activeView: "features" | "live";
-  onViewChange: (view: "features" | "live") => void;
+  activeView: "features" | "live" | "library";
+  onViewChange: (view: "features" | "live" | "library") => void;
 };
 
 function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
@@ -782,6 +993,16 @@ function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
       >
         <Monitor size={18} />
         实时视图
+      </button>
+      <button
+        className={`view-toggle-btn ${activeView === "library" ? "active" : ""}`}
+        role="tab"
+        aria-selected={activeView === "library"}
+        type="button"
+        onClick={() => onViewChange("library")}
+      >
+        <Music2 size={18} />
+        MIDI 曲库
       </button>
     </div>
   );
