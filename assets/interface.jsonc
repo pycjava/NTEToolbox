@@ -323,11 +323,6 @@
          "type": "input",
          "inputs": [
             {
-               "name": "midi_path",
-               "label": "MIDI 文件路径",
-               "pipeline_type": "string"
-            },
-            {
                "name": "bpm",
                "label": "默认 BPM",
                "pipeline_type": "string"

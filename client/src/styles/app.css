@@ -637,6 +637,185 @@ h3 {
   margin-top: 22px;
 }
 
+.mutopia-browser {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+
+.mutopia-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.mutopia-header h3 {
+  font-size: 16px;
+}
+
+.mutopia-header p,
+.mutopia-copy p,
+.mutopia-empty,
+.mutopia-error {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mutopia-list {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.mutopia-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-muted);
+}
+
+.mutopia-copy {
+  min-width: 0;
+}
+
+.mutopia-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mutopia-title-line h4 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.mutopia-title-line span {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mutopia-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compact-action {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.mutopia-empty {
+  min-height: 20px;
+}
+
+.mutopia-error {
+  color: var(--color-danger);
+}
+
+/* ── MIDI 曲库全页面模式 ── */
+.mutopia-panel {
+  display: grid;
+  gap: 16px;
+  width: min(1060px, 100%);
+  margin: 0 auto;
+}
+
+.mutopia-panel > .mutopia-browser {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.mutopia-panel .mutopia-list {
+  max-height: calc(100vh - 320px);
+}
+
+/* ── 搜索栏 ── */
+.mutopia-search input {
+  width: 100%;
+  min-height: var(--size-touch);
+  padding: 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.mutopia-search input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.mutopia-search input:focus {
+  border-color: var(--color-primary);
+}
+
+/* ── 已下载标签 ── */
+.mutopia-downloaded-badge {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── 弹钢琴配置曲目下拉 ── */
+.midi-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.midi-select select {
+  flex: 1;
+  min-height: var(--size-touch);
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+  outline: none;
+}
+
+.midi-select select:focus {
+  border-color: var(--color-primary);
+}
+
+.midi-select .hint {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -685,6 +864,19 @@ h3 {
   .option-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .mutopia-header,
+  .mutopia-item {
+    grid-template-columns: 1fr;
+  }
+
+  .mutopia-header {
+    display: grid;
+  }
+
+  .mutopia-actions {
+    justify-content: start;
   }
 
   .connection-bar {

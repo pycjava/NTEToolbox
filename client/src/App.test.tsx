@@ -33,18 +33,95 @@ describe("App", () => {
     expect(screen.queryByRole("option", { name: "模拟器窗口 1" })).toBeNull();
   });
 
-  it("opens piano configuration with keyboard input fields", () => {
+  it("opens piano configuration with track selector and keyboard input fields", () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "编辑弹钢琴 (键盘输入)" }));
 
     const dialog = screen.getByRole("dialog", { name: "弹钢琴 (键盘输入)" });
-    expect(within(dialog).getByText("MIDI 文件路径")).toBeTruthy();
+    expect(within(dialog).getByText("选择曲目")).toBeTruthy();
     expect(within(dialog).getByText("默认 BPM")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("36")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("速率不变")).toBeTruthy();
     expect(within(dialog).getByDisplayValue("1")).toBeTruthy();
+  });
+
+  it("shows a public-domain Mutopia MIDI browser in the library tab", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_mutopia_public_domain_midi") {
+        return Promise.resolve([
+          {
+            id: "rumores-de-la-caleta",
+            title: "Rumores de la Caleta",
+            composer: "I. M. F. Albéniz",
+            instrument: "Piano",
+            style: "Romantic",
+            license: "Public Domain",
+            midiUrl: "https://www.mutopiaproject.org/ftp/AlbenizIMF/O71/Rumores_de_la-caleta/Rumores_de_la-caleta.mid",
+            sourceUrl: "https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=898"
+          }
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /MIDI 曲库/ }));
+
+    expect(screen.getByText("Mutopia 公共领域 MIDI")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "加载曲库" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rumores de la Caleta")).toBeTruthy();
+    });
+    expect(screen.getByText("Public Domain")).toBeTruthy();
+    expect(screen.queryByText("Creative Commons Attribution-ShareAlike 4.0")).toBeNull();
+  });
+
+  it("downloads a Mutopia MIDI in library tab and shows downloaded badge", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_mutopia_public_domain_midi") {
+        return Promise.resolve([
+          {
+            id: "andre-sonatine",
+            title: "Sonatine",
+            composer: "J. André",
+            instrument: "Piano",
+            style: "Classical",
+            license: "Public Domain",
+            midiUrl: "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid",
+            sourceUrl: "https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=207"
+          }
+        ]);
+      }
+      if (command === "download_mutopia_midi") {
+        return Promise.resolve("C:\\midi\\andre-sonatine.mid");
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /MIDI 曲库/ }));
+    fireEvent.click(screen.getByRole("button", { name: "加载曲库" }));
+    await waitFor(() => {
+      expect(screen.getByText("Sonatine")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "下载 Sonatine" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("已下载 ✓")).toBeTruthy();
+    });
+    expect(invokeMock).toHaveBeenCalledWith("download_mutopia_midi", {
+      request: expect.objectContaining({
+        title: "Sonatine",
+        midiUrl: "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid",
+        license: "Public Domain"
+      })
+    });
   });
 
   it("opens fishing configuration with independent fish screenshot controls", () => {
