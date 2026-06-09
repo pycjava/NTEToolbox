@@ -571,8 +571,8 @@ class Fish(CustomAction):
                 if fail_num > FISH_RECO_FIAL_NUM_MAX:
                     log.error("多次识别失败，终止运行")
                     return False
-                log.debug("什么都没识别到，尝试按 F")
-                post_click_key(Win_virtual_key.F)
+                log.debug("什么都没识别到，等待中...")
                 fail_num += 1
+                time.sleep(0.5)
 
         return True
