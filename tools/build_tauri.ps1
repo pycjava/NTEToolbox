@@ -412,11 +412,11 @@ if (-not (Test-Path $releaseDir)) {
     throw "Release directory not found: $releaseDir"
 }
 
-# Copy exe
-$exePath = Join-Path $releaseDir "MaaToolbox Client.exe"
+# Copy exe (Tauri v2 uses the Cargo package name as the binary name)
+$exePath = Join-Path $releaseDir "ntttoolbox-client.exe"
 if (Test-Path $exePath) {
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    Copy-Item -Force $exePath $OutputDir
+    Copy-Item -Force $exePath (Join-Path $OutputDir "MaaToolbox Client.exe")
     Write-Host "       EXE -> $OutputDir\MaaToolbox Client.exe"
 }
 
