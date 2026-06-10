@@ -282,7 +282,7 @@ def pick_with_wheel(hwnd: int, /):
 拾取轮间间隔: Final[float] = 0.15  # 过小会无法拾取
 
 
-S_RANK_GOLDEN_BG_ROI: Final = [413, 120, 414, 414]
+S_RANK_GOLDEN_BG_ROI: Final = [480, 200, 280, 280]
 S_RANK_ICON_ROI: Final = [660, 190, 140, 130]
 S_RANK_ICON_TEMPLATE: Final = "fish/s_rank_icon.png"
 FISH_SCREENSHOT_ROOT_ENV: Final = "NTE_TOOLBOX_INSTALL_ROOT"
@@ -305,8 +305,8 @@ def reco_golden_fish(context: Context, img: Img, /) -> bool:
                         "roi": S_RANK_GOLDEN_BG_ROI,
                         "method": 4,
                         "lower": [210, 105, 0],
-                        "upper": [255, 230, 105],
-                        "count": 1200,
+                        "upper": [255, 225, 80],
+                        "count": 3500,
                     },
                 },
             }
@@ -340,7 +340,7 @@ def get_fish_screenshot_path(now: float, /) -> Path:
     timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
     millis = int(now * 1000) % 1000
     safe_timestamp = re.sub(r"[^0-9_]", "", f"{timestamp}_{millis:03d}")
-    save_root = os.getenv(FISH_SCREENSHOT_ROOT_ENV) or os.getcwd()
+    save_root = os.getenv(FISH_SCREENSHOT_ROOT_ENV) or Path(os.getcwd(), "fish")
     return Path(save_root, f"fish_{safe_timestamp}.png")
 
 
@@ -352,6 +352,10 @@ def save_img(img: Img, path: Path, /) -> bool:
     if color_type is None:
         log.error(f"不支持的截图通道数: {channel_num}")
         return False
+
+    # BGR → RGB：MaaFramework 截图为 BGR 顺序，PNG 要求 RGB
+    if channel_num == 3:
+        img = img[..., ::-1].copy()
 
     def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
         return (
