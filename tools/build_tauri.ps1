@@ -352,6 +352,29 @@ $releaseDir = Join-Path $TargetDir "release"
 $genDir = Join-Path $srcTauriDir "gen"
 $genDllPath = Join-Path $genDir "WebView2Loader.dll"
 
+# The webview2-com-sys build script copies WebView2Loader.dll into its OUT_DIR/x64/.
+# When CARGO_TARGET_DIR is inside %TEMP%, the OS may clean up those files between builds,
+# but cargo skips re-running the build script (based on the stale invoked.timestamp).
+# Detect this and force a rebuild of webview2-com-sys to regenerate the DLL.
+$webview2BuildDirs = Get-ChildItem -Path (Join-Path $TargetDir "release\build") `
+    -Directory -Filter "webview2-com-sys-*" -ErrorAction SilentlyContinue
+$webview2OutDll = $null
+foreach ($dir in $webview2BuildDirs) {
+    $candidate = Join-Path $dir.FullName "out\x64\WebView2Loader.dll"
+    if (Test-Path $candidate) {
+        $webview2OutDll = $candidate
+        break
+    }
+}
+
+if (-not $webview2OutDll) {
+    Write-Host "       WebView2Loader.dll missing from build cache, forcing rebuild of webview2-com-sys ..." -ForegroundColor Yellow
+    & $cargoCommand @("clean", "-p", "webview2-com-sys", "--release", "--manifest-path", (Join-Path $srcTauriDir "Cargo.toml"))
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "       Warning: cargo clean failed, will proceed anyway" -ForegroundColor Yellow
+    }
+}
+
 # Pre-copy WebView2Loader.dll from any existing build so cargo resource validation passes.
 # The correct release DLL will overwrite this after the compile step.
 if (-not (Test-Path $genDllPath)) {
@@ -412,11 +435,11 @@ if (-not (Test-Path $releaseDir)) {
     throw "Release directory not found: $releaseDir"
 }
 
-# Copy exe
-$exePath = Join-Path $releaseDir "MaaToolbox Client.exe"
+# Copy exe (Tauri v2 uses the Cargo package name as the binary name)
+$exePath = Join-Path $releaseDir "ntttoolbox-client.exe"
 if (Test-Path $exePath) {
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    Copy-Item -Force $exePath $OutputDir
+    Copy-Item -Force $exePath (Join-Path $OutputDir "MaaToolbox Client.exe")
     Write-Host "       EXE -> $OutputDir\MaaToolbox Client.exe"
 }
 
@@ -434,6 +457,22 @@ if (Test-Path $bundleDir) {
         New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
         Copy-Item -Force $installer.FullName $OutputDir
         Write-Host "       $($installer.Name) -> $OutputDir"
+    }
+}
+
+# Cleanup PyInstaller's temporary dist output after Tauri has consumed agent.exe.
+$agentDistDir = Join-Path $repoRoot "dist"
+if (Test-Path -LiteralPath $agentDistDir -PathType Container) {
+    $resolvedAgentDistDir = [System.IO.Path]::GetFullPath($agentDistDir).Replace("/", "\").TrimEnd([char[]] "\")
+    $resolvedOutputDir = [System.IO.Path]::GetFullPath($OutputDir).Replace("/", "\").TrimEnd([char[]] "\")
+    $outputInsideAgentDist = ($resolvedOutputDir -ieq $resolvedAgentDistDir) -or
+        $resolvedOutputDir.StartsWith("$resolvedAgentDistDir\", [System.StringComparison]::OrdinalIgnoreCase)
+
+    if ($outputInsideAgentDist) {
+        Write-Host "       Skipped cleanup of $agentDistDir because OutputDir is inside it." -ForegroundColor Yellow
+    } else {
+        Remove-Item -LiteralPath $agentDistDir -Recurse -Force
+        Write-Host "       Cleaned up $agentDistDir" -ForegroundColor DarkGray
     }
 }
 

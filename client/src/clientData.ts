@@ -76,7 +76,7 @@ const defaultGlobalSettingsOption: InputOptionDefinition = {
 const featureMetadataByEntry: Record<string, Pick<GameDefinition["features"][number], "id" | "description">> = {
   钓鱼: {
     id: "fish",
-    description: "自动钓鱼、溜鱼、卖鱼买饵"
+    description: "自动钓鱼、溜鱼、卖鱼买饵、鱼截图"
   },
   弹钢琴_keybord: {
     id: "piano",
@@ -84,7 +84,7 @@ const featureMetadataByEntry: Record<string, Pick<GameDefinition["features"][num
   },
   实时辅助: {
     id: "assist",
-    description: "自动拾取、S 级鱼截图"
+    description: "自动拾取"
   }
 };
 

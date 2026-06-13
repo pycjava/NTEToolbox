@@ -1,14 +1,15 @@
 mod client_config;
+mod debug_log;
 mod maa_bridge;
+mod mutopia_midi;
 mod window_capture;
 mod window_enumeration;
 
-use maa_bridge::{
-    MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate,
-};
+use debug_log::resolve_debug_log_dir;
+use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate};
+use mutopia_midi::{DownloadedMidiEntry, MutopiaMidiEntry, MutopiaMidiDownloadRequest};
 use serde_json::Value;
-use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -222,44 +223,32 @@ fn poll_maa_task_states(
         .poll_task_status_updates()
 }
 
+#[tauri::command]
+async fn list_mutopia_public_domain_midi() -> Result<Vec<MutopiaMidiEntry>, String> {
+    tauri::async_runtime::spawn_blocking(mutopia_midi::list_public_domain_piano_midi)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn download_mutopia_midi(
+    app: AppHandle,
+    request: MutopiaMidiDownloadRequest,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || mutopia_midi::download_midi(&app, &request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_downloaded_midi() -> Result<Vec<DownloadedMidiEntry>, String> {
+    tauri::async_runtime::spawn_blocking(mutopia_midi::list_downloaded_midi)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn client_debug_log_dir(app: &tauri::App) -> Result<PathBuf, tauri::Error> {
-    if let Ok(log_dir) = exe_debug_log_dir() {
-        if is_log_dir_writable(&log_dir) {
-            return Ok(log_dir);
-        }
-    }
-
-    Ok(app
-        .path()
-        .app_local_data_dir()?
-        .join("maa-runtime")
-        .join("debug"))
-}
-
-fn exe_debug_log_dir() -> Result<PathBuf, std::io::Error> {
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .map(|path| path.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    Ok(exe_dir.join("debug"))
-}
-
-fn is_log_dir_writable(path: &Path) -> bool {
-    if fs::create_dir_all(path).is_err() {
-        return false;
-    }
-
-    let probe_path = path.join(".ntetoolbox-log-write-test");
-    let writable = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&probe_path)
-        .is_ok();
-    let _ = fs::remove_file(probe_path);
-
-    writable
+    Ok(resolve_debug_log_dir(app.path().app_local_data_dir()?))
 }
 
 fn client_log_targets(debug_log_dir: PathBuf) -> Vec<Target> {
@@ -279,7 +268,7 @@ fn stop_maa_runtime_on_exit(app: &AppHandle) {
     let runtime = app.state::<Mutex<MaaBridgeRuntime>>();
     match runtime.lock() {
         Ok(mut runtime) => {
-            if let Err(error) = runtime.stop_all_tasks() {
+            if let Err(error) = runtime.stop_all_tasks_with_reason("app_exit") {
                 log::warn!("Failed to stop Maa runtime on app exit: {error}");
             }
         }
@@ -316,6 +305,9 @@ pub fn run() {
             start_maa_task,
             stop_maa_task,
             poll_maa_task_states,
+            list_mutopia_public_domain_midi,
+            download_mutopia_midi,
+            list_downloaded_midi,
             enumerate_windows,
             start_live_view,
             stop_live_view
@@ -326,4 +318,69 @@ pub fn run() {
             RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_maa_runtime_on_exit(app),
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod mutopia_midi_tests {
+    use crate::mutopia_midi::{
+        parse_public_domain_midi_listing, validate_download_request, MutopiaMidiDownloadRequest,
+    };
+
+    #[test]
+    fn parses_only_public_domain_midi_entries_from_mutopia_listing() {
+        let html = r#"
+        <table class="table-bordered result-table">
+          <tr><td>Sonatine</td><td>by J. André (1741–1799)</td><td>Opus 34. I.</td><td>&nbsp;</td></tr>
+          <tr><td>for Piano</td><td>18th Century</td><td>Classical</td><td></td></tr>
+          <tr><td>Unknown</td><td><a href="../legal.html#publicdomain">Public Domain</a></td><td><a href="piece-info.cgi?id=207">More Information</a></td><td>2013/01/06</td></tr>
+          <tr><td>Download: <a href="https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.ly">.ly file</a></td>
+          <td><a href="https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid">.mid file</a></td></tr>
+        </table>
+        <table class="table-bordered result-table">
+          <tr><td>Toccatina</td><td>by C.-V. Alkan (1813–1888)</td><td>Op.75</td><td>&nbsp;</td></tr>
+          <tr><td>for Piano</td><td>1872</td><td>Romantic</td><td></td></tr>
+          <tr><td>Paris</td><td><a href="../legal.html#ccasa">Creative Commons Attribution-ShareAlike 4.0</a></td><td><a href="piece-info.cgi?id=2163">More Information</a></td><td>2017/01/17</td></tr>
+          <tr><td><a href="https://www.mutopiaproject.org/ftp/AlkanCV/O75/toccatina/toccatina.mid">.mid file</a></td></tr>
+        </table>
+        "#;
+
+        let entries = parse_public_domain_midi_listing(html);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Sonatine");
+        assert_eq!(entries[0].composer, "J. André");
+        assert_eq!(entries[0].instrument, "Piano");
+        assert_eq!(entries[0].style, "Classical");
+        assert_eq!(entries[0].license, "Public Domain");
+        assert_eq!(
+            entries[0].midi_url,
+            "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid"
+        );
+        assert_eq!(
+            entries[0].source_url,
+            "https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=207"
+        );
+    }
+
+    #[test]
+    fn rejects_download_requests_outside_mutopia_public_domain_midi() {
+        let mut request = MutopiaMidiDownloadRequest {
+            title: "Sonatine".to_string(),
+            composer: "J. André".to_string(),
+            license: "Creative Commons Attribution-ShareAlike 4.0".to_string(),
+            midi_url: "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid".to_string(),
+        };
+
+        assert!(validate_download_request(&request).is_err());
+
+        request.license = "Public Domain".to_string();
+        request.midi_url = "https://example.com/andre-sonatine.mid".to_string();
+        assert!(validate_download_request(&request).is_err());
+
+        request.midi_url = "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.pdf".to_string();
+        assert!(validate_download_request(&request).is_err());
+
+        request.midi_url = "https://www.mutopiaproject.org/ftp/AndreJ/O34/andre-sonatine/andre-sonatine.mid".to_string();
+        assert!(validate_download_request(&request).is_ok());
+    }
 }

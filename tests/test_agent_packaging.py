@@ -88,6 +88,23 @@ class AgentPackagingTest(unittest.TestCase):
         )
         self.assertIn('Invoke-Step "python" @(".\\tools\\build_agent.py")', script)
 
+    def test_tauri_build_script_cleans_dist_after_collecting_artifacts(self):
+        script = (ROOT / "tools" / "build_tauri.ps1").read_text(encoding="utf-8")
+
+        cleanup_marker = '$agentDistDir = Join-Path $repoRoot "dist"'
+        self.assertIn(cleanup_marker, script)
+
+        collect_index = script.index('Write-Host "[6/6] Collecting output artifacts ..."')
+        cleanup_index = script.index(cleanup_marker)
+        complete_index = script.index('Write-Host " Build complete!"')
+
+        self.assertGreater(cleanup_index, collect_index)
+        self.assertLess(cleanup_index, complete_index)
+        self.assertIn(
+            "Remove-Item -LiteralPath $agentDistDir -Recurse -Force",
+            script[cleanup_index:complete_index],
+        )
+
     def test_source_interface_uses_python_agent_for_development(self):
         interface = json.loads(
             strip_jsonc_comments(

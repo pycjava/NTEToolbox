@@ -19,7 +19,15 @@ const interfaceConfig = parseJsonc(`{
     {
       "name": "钓鱼",
       "entry": "钓鱼",
-      "option": ["钓鱼终止时间开关", "溜鱼设置", "卖鱼买换饵开关", "卖鱼买换饵设置"]
+      "option": [
+        "钓鱼终止时间开关",
+        "溜鱼设置",
+        "卖鱼买换饵开关",
+        "卖鱼买换饵设置",
+        "钓鱼_S级鱼截图",
+        "钓鱼_金色鱼截图",
+        "钓鱼_鱼截图_设置"
+      ]
     }
   ],
   "option": {
@@ -73,6 +81,47 @@ const interfaceConfig = parseJsonc(`{
       "type": "input",
       "inputs": [{ "name": "买饵次数", "pipeline_type": "int", "default": "4" }],
       "pipeline_override": { "钓鱼": { "attach": { "买饵次数": "{买饵次数}" } } }
+    },
+    "钓鱼_S级鱼截图": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": { "钓鱼": { "attach": { "S级鱼截图": true } } }
+        },
+        {
+          "name": "No",
+          "pipeline_override": { "钓鱼": { "attach": { "S级鱼截图": false } } }
+        }
+      ],
+      "default_case": "Yes"
+    },
+    "钓鱼_金色鱼截图": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": { "钓鱼": { "attach": { "金色鱼截图": true } } }
+        },
+        {
+          "name": "No",
+          "pipeline_override": { "钓鱼": { "attach": { "金色鱼截图": false } } }
+        }
+      ],
+      "default_case": "No"
+    },
+    "钓鱼_鱼截图_设置": {
+      "type": "input",
+      "inputs": [
+        { "name": "鱼截图冷却时间", "pipeline_type": "int", "default": "5" }
+      ],
+      "pipeline_override": {
+        "钓鱼": {
+          "attach": {
+            "鱼截图冷却时间": "{鱼截图冷却时间}"
+          }
+        }
+      }
     }
   }
 }`);
@@ -90,7 +139,10 @@ describe("client config persistence", () => {
         "溜鱼_midpoint_pix_range": "8",
         "溜鱼_midpoint_sleep_time": "12",
         "卖鱼买换饵开关": false,
-        "买饵次数": "6"
+        "买饵次数": "6",
+        "钓鱼_S级鱼截图": true,
+        "钓鱼_金色鱼截图": true,
+        "鱼截图冷却时间": "7"
       }
     );
 
@@ -106,7 +158,10 @@ describe("client config persistence", () => {
                 "溜鱼_midpoint_pix_range": "8",
                 "溜鱼_midpoint_sleep_time": "12",
                 "卖鱼买换饵开关": false,
-                "买饵次数": "6"
+                "买饵次数": "6",
+                "钓鱼_S级鱼截图": true,
+                "钓鱼_金色鱼截图": true,
+                "鱼截图冷却时间": "7"
               },
               pipelineOverride: {
                 "钓鱼": {
@@ -116,7 +171,10 @@ describe("client config persistence", () => {
                     "溜鱼_midpoint_pix_range": 8,
                     "溜鱼_midpoint_sleep_time": 12,
                     "卖鱼买换饵开关": false,
-                    "买饵次数": 6
+                    "买饵次数": 6,
+                    "S级鱼截图": true,
+                    "金色鱼截图": true,
+                    "鱼截图冷却时间": 7
                   }
                 }
               }
@@ -143,5 +201,25 @@ describe("client config persistence", () => {
     expect(restored.settingsValues.debug_mode_switch).toBe("1");
     expect(restored.games[0].features[0].optionValues?.["买饵次数"]).toBe("9");
     expect(restored.games[0].features[0].configSummary).toContain("买饵 9次");
+  });
+
+  it("drops stale screenshot save directory values and migrates cooldown values from saved configs", () => {
+    const data = buildClientDataFromInterface(interfaceConfig);
+    const persisted = buildPersistedClientConfig(buildInitialClientState(data.initialGames), data.nteOptions);
+    persisted.games.nte.features.fish.optionValues["S级鱼截图保存目录"] = "captures";
+    persisted.games.nte.features.fish.optionValues["S级鱼截图冷却时间"] = "8";
+    delete persisted.games.nte.features.fish.optionValues["鱼截图冷却时间"];
+
+    const restored = applyPersistedClientConfig(buildInitialClientState(data.initialGames), persisted);
+
+    expect(restored.games[0].features[0].optionValues).not.toHaveProperty("S级鱼截图保存目录");
+    expect(restored.games[0].features[0].optionValues).not.toHaveProperty("S级鱼截图冷却时间");
+    expect(restored.games[0].features[0].optionValues?.["鱼截图冷却时间"]).toBe("8");
+    expect(buildPersistedClientConfig(restored, data.nteOptions).games.nte.features.fish.optionValues).not.toHaveProperty(
+      "S级鱼截图保存目录"
+    );
+    expect(buildPersistedClientConfig(restored, data.nteOptions).games.nte.features.fish.optionValues).not.toHaveProperty(
+      "S级鱼截图冷却时间"
+    );
   });
 });

@@ -1,12 +1,15 @@
+use crate::debug_log::resolve_debug_log_dir;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -28,6 +31,7 @@ const MAA_PROCESS_STOP_EXIT_CODE: u32 = 1;
 const MAA_PROCESS_WAIT_POLL_MS: u64 = 50;
 const MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS: u64 = 1_500;
 const MAA_PROCESS_FORCE_STOP_TIMEOUT_MS: u64 = 3_000;
+const FISH_SCREENSHOT_ROOT_ENV: &str = "NTE_TOOLBOX_INSTALL_ROOT";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +93,7 @@ struct MaaChildProcess {
     child: Child,
     game_id: String,
     feature_id: String,
+    last_exit_status: Option<ExitStatus>,
     #[cfg(windows)]
     job: Option<WindowsJob>,
 }
@@ -110,6 +115,7 @@ impl MaaChildProcess {
                 child,
                 game_id,
                 feature_id,
+                last_exit_status: None,
                 job,
             };
         }
@@ -120,47 +126,83 @@ impl MaaChildProcess {
                 child,
                 game_id,
                 feature_id,
+                last_exit_status: None,
             }
         }
     }
 
+    fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     fn send_run_command(&mut self) -> Result<(), String> {
+        let pid = self.pid();
         if let Some(mut stdin) = self.child.stdin.take() {
+            log::info!(
+                "Sending MaaPiCli run command: pid={pid}, game_id={}, feature_id={}, command=RunTasks(6)",
+                self.game_id,
+                self.feature_id
+            );
             stdin
                 .write_all(b"6\n")
                 .map_err(|error| format!("Failed to send MaaPiCli run command: {error}"))?;
             let _ = stdin.flush();
+            log::info!(
+                "MaaPiCli stdin closed after run command: pid={pid}, game_id={}, feature_id={}, close_reason=allow_clean_eof_exit_after_menu",
+                self.game_id,
+                self.feature_id
+            );
+        } else {
+            log::warn!(
+                "MaaPiCli stdin was already closed before run command: pid={pid}, game_id={}, feature_id={}",
+                self.game_id,
+                self.feature_id
+            );
         }
 
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<(), String> {
-        stop_maa_process_tree(self)
+    fn stop(&mut self, reason: &str) -> Result<(), String> {
+        stop_maa_process_tree(self, reason)
     }
 
     fn poll_exit(&mut self) -> Result<Option<ExitStatus>, String> {
-        self.child
+        if self.last_exit_status.is_some() {
+            return Ok(self.last_exit_status);
+        }
+
+        let status = self
+            .child
             .try_wait()
-            .map_err(|error| format!("Failed to query MaaPiCli process: {error}"))
+            .map_err(|error| format!("Failed to query MaaPiCli process: {error}"))?;
+        if let Some(status) = status {
+            self.last_exit_status = Some(status);
+        }
+
+        Ok(status)
     }
 
-    fn wait_for_exit(&mut self, timeout: Duration) -> Result<bool, String> {
+    fn wait_for_exit_status(&mut self, timeout: Duration) -> Result<Option<ExitStatus>, String> {
         let deadline = Instant::now() + timeout;
 
         loop {
-            if self.poll_exit()?.is_some() {
-                return Ok(true);
+            if let Some(status) = self.poll_exit()? {
+                return Ok(Some(status));
             }
 
             if Instant::now() >= deadline {
-                return Ok(false);
+                return Ok(None);
             }
 
             thread::sleep(Duration::from_millis(MAA_PROCESS_WAIT_POLL_MS));
         }
     }
 
+    fn wait_for_exit(&mut self, timeout: Duration) -> Result<bool, String> {
+        self.wait_for_exit_status(timeout)
+            .map(|status| status.is_some())
+    }
 }
 
 #[derive(Default)]
@@ -176,49 +218,71 @@ impl MaaBridgeRuntime {
         request: &MaaTaskStartRequest,
     ) -> Result<MaaTaskRunResponse, String> {
         let key = task_key(&request.game_id, &request.feature_id);
-        self.stop_task_by_key(&key)?;
+        self.stop_task_by_key(&key, "replace_existing_task_before_start")?;
 
         let runtime_root = self.ensure_runtime_root(app)?;
+        let debug_log_dir = resolve_bridge_debug_log_dir(app)?;
+        prepare_runtime_debug_dir(&runtime_root, &debug_log_dir)?;
+        migrate_legacy_bridge_log_dir(&runtime_root, &debug_log_dir)?;
 
         // Debug: dump the raw option_definitions received from the frontend
         {
-            let debug_path = runtime_root.join("log");
-            let _ = fs::create_dir_all(&debug_path);
+            let _ = fs::create_dir_all(&debug_log_dir);
             let defs_json = serde_json::to_string_pretty(&request.option_definitions)
                 .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
-            let _ = fs::write(debug_path.join("debug_option_definitions.json"), defs_json);
+            let _ = fs::write(
+                debug_log_dir.join("debug_option_definitions.json"),
+                defs_json,
+            );
         }
 
         write_maa_pi_config(&runtime_root, request)?;
 
-        // In debug builds stderr is inherited so agent/MaaPiCli logs appear in the
-        // `pnpm tauri dev` terminal.  In release builds logs go to a file instead.
-        let stderr_config: Stdio = if cfg!(debug_assertions) {
-            Stdio::inherit()
-        } else {
-            let log_dir = runtime_root.join("log");
-            let _ = fs::create_dir_all(&log_dir);
-            let stderr_file = File::create(log_dir.join("maapicli_stderr.log"))
-                .map_err(|error| format!("Failed to create MaaPiCli log file: {error}"))?;
-            Stdio::from(stderr_file)
-        };
+        let stderr_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(debug_log_dir.join("maapicli_stderr.log"))
+            .map_err(|error| format!("Failed to create MaaPiCli log file: {error}"))?;
 
         let mut command = Command::new(runtime_root.join("MaaPiCli.exe"));
+        let install_root = resolve_install_root().unwrap_or_else(|error| {
+            log::warn!(
+                "Failed to resolve install root for fish screenshots, falling back to Maa runtime root: {error}"
+            );
+            runtime_root.clone()
+        });
         command
             .current_dir(&runtime_root)
+            .env(FISH_SCREENSHOT_ROOT_ENV, &install_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(stderr_config);
+            .stderr(Stdio::from(stderr_file));
 
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
+        log::info!(
+            "Starting MaaPiCli task: task_key={key}, game_id={}, feature_id={}, task_name={}, runtime_root={}, debug_log_dir={}, screenshot_root={}",
+            request.game_id,
+            request.feature_id,
+            request.task_name,
+            runtime_root.display(),
+            debug_log_dir.display(),
+            install_root.display()
+        );
+        let spawned_child = command
+            .spawn()
+            .map_err(|error| format!("Failed to start MaaPiCli: {error}"))?;
+        let pid = spawned_child.id();
         let mut child = MaaChildProcess::new(
-            command
-                .spawn()
-                .map_err(|error| format!("Failed to start MaaPiCli: {error}"))?,
+            spawned_child,
             request.game_id.clone(),
             request.feature_id.clone(),
+        );
+        log::info!(
+            "MaaPiCli process started: task_key={key}, pid={pid}, game_id={}, feature_id={}",
+            request.game_id,
+            request.feature_id
         );
 
         // Take stdin ownership, write the "Run tasks" command, then drop to send EOF.
@@ -227,10 +291,8 @@ impl MaaBridgeRuntime {
         // it reads EOF and exits cleanly instead of blocking forever on a pipe whose
         // write end is held in the HashMap.
         if let Err(error) = child.send_run_command() {
-            let _ = child.stop();
-            let _ = child.wait_for_exit(Duration::from_millis(
-                MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
-            ));
+            let _ = child.stop("failed_to_send_run_command");
+            let _ = child.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS));
             return Err(error);
             // stdin dropped here → MaaPiCli receives EOF
         }
@@ -247,19 +309,23 @@ impl MaaBridgeRuntime {
         game_id: &str,
         feature_id: &str,
     ) -> Result<MaaTaskRunResponse, String> {
-        self.stop_task_by_key(&task_key(game_id, feature_id))?;
+        self.stop_task_by_key(&task_key(game_id, feature_id), "user_stop_request")?;
 
         Ok(MaaTaskRunResponse {
             run_state: "idle".to_string(),
         })
     }
 
-    pub fn stop_all_tasks(&mut self) -> Result<(), String> {
+    pub fn stop_all_tasks_with_reason(&mut self, reason: &str) -> Result<(), String> {
         let mut errors = Vec::new();
         let keys = self.children.keys().cloned().collect::<Vec<_>>();
+        log::info!(
+            "Stopping all MaaPiCli tasks: count={}, reason={reason}",
+            keys.len()
+        );
 
         for key in keys {
-            if let Err(error) = self.stop_task_by_key(&key) {
+            if let Err(error) = self.stop_task_by_key(&key, reason) {
                 errors.push(format!("{key}: {error}"));
             }
         }
@@ -278,6 +344,13 @@ impl MaaBridgeRuntime {
             let Some(exit_status) = child.poll_exit()? else {
                 continue;
             };
+            log::info!(
+                "MaaPiCli process exited: task_key={key}, pid={}, game_id={}, feature_id={}, reason=process_exit, {}",
+                child.pid(),
+                child.game_id,
+                child.feature_id,
+                format_maa_exit_status(exit_status.success(), exit_status.code())
+            );
 
             updates.push((
                 key.clone(),
@@ -301,27 +374,54 @@ impl MaaBridgeRuntime {
         Ok(updates.into_iter().map(|(_, update)| update).collect())
     }
 
-    fn stop_task_by_key(&mut self, key: &str) -> Result<(), String> {
+    fn stop_task_by_key(&mut self, key: &str, reason: &str) -> Result<(), String> {
         let Some(mut child) = self.children.remove(key) else {
+            log::debug!(
+                "MaaPiCli stop requested but task is not running: task_key={key}, reason={reason}"
+            );
             return Ok(());
         };
 
-        let stop_result = child.stop();
-        let wait_result = child.wait_for_exit(Duration::from_millis(
-            MAA_PROCESS_FORCE_STOP_TIMEOUT_MS,
-        ));
+        let pid = child.pid();
+        log::info!(
+            "Stopping MaaPiCli task: task_key={key}, pid={pid}, game_id={}, feature_id={}, reason={reason}",
+            child.game_id,
+            child.feature_id
+        );
+        let stop_result = child.stop(reason);
+        let wait_result =
+            child.wait_for_exit_status(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS));
 
         match (stop_result, wait_result) {
-            (Ok(()), Ok(true)) => Ok(()),
-            (Ok(()), Ok(false)) => Err("Timed out waiting for MaaPiCli to exit after stop".to_string()),
-            (Ok(()), Err(error)) => Err(error),
-            (Err(stop_error), Ok(true)) => {
-                log::warn!("MaaPiCli stop reported an error after the process exited: {stop_error}");
+            (Ok(()), Ok(Some(exit_status))) => {
+                log::info!(
+                    "MaaPiCli task stopped: task_key={key}, pid={pid}, reason={reason}, {}",
+                    format_maa_exit_status(exit_status.success(), exit_status.code())
+                );
                 Ok(())
             }
-            (Err(stop_error), Ok(false)) => Err(format!(
-                "{stop_error}; MaaPiCli is still running after the stop timeout"
-            )),
+            (Ok(()), Ok(None)) => {
+                log::warn!(
+                    "Timed out waiting for MaaPiCli to exit after stop: task_key={key}, pid={pid}, reason={reason}"
+                );
+                Err("Timed out waiting for MaaPiCli to exit after stop".to_string())
+            }
+            (Ok(()), Err(error)) => Err(error),
+            (Err(stop_error), Ok(Some(exit_status))) => {
+                log::warn!(
+                    "MaaPiCli stop reported an error after the process exited: task_key={key}, pid={pid}, reason={reason}, stop_error={stop_error}, {}",
+                    format_maa_exit_status(exit_status.success(), exit_status.code())
+                );
+                Ok(())
+            }
+            (Err(stop_error), Ok(None)) => {
+                log::warn!(
+                    "MaaPiCli is still running after the stop timeout: task_key={key}, pid={pid}, reason={reason}, stop_error={stop_error}"
+                );
+                Err(format!(
+                    "{stop_error}; MaaPiCli is still running after the stop timeout"
+                ))
+            }
             (Err(stop_error), Err(wait_error)) => Err(format!("{stop_error}; {wait_error}")),
         }
     }
@@ -341,7 +441,7 @@ impl MaaBridgeRuntime {
 
 impl Drop for MaaBridgeRuntime {
     fn drop(&mut self) {
-        if let Err(error) = self.stop_all_tasks() {
+        if let Err(error) = self.stop_all_tasks_with_reason("runtime_drop") {
             log::warn!("Failed to stop Maa runtime during shutdown: {error}");
         }
     }
@@ -481,9 +581,10 @@ impl Drop for WindowsJob {
 }
 
 #[cfg(windows)]
-fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
+fn stop_maa_process_tree(process: &mut MaaChildProcess, reason: &str) -> Result<(), String> {
     let pid = process.child.id();
     if process.poll_exit()?.is_some() {
+        log::info!("MaaPiCli already exited before stop: pid={pid}, reason={reason}");
         return Ok(());
     }
 
@@ -492,9 +593,12 @@ fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
     if let Some(result) = job_terminate_result {
         match result {
             Ok(()) => {
-                if process.wait_for_exit(Duration::from_millis(
-                    MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS,
-                ))? {
+                log::info!(
+                    "TerminateJobObject sent to MaaPiCli process tree: pid={pid}, reason={reason}, stop_exit_code={MAA_PROCESS_STOP_EXIT_CODE}"
+                );
+                if process
+                    .wait_for_exit(Duration::from_millis(MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS))?
+                {
                     return Ok(());
                 }
                 errors.push("Timed out waiting for MaaPiCli after TerminateJobObject".to_string());
@@ -509,6 +613,7 @@ fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
 
     match kill_windows_process_tree(pid) {
         Ok(()) => {
+            log::info!("taskkill sent to MaaPiCli process tree: pid={pid}, reason={reason}");
             if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
                 return Ok(());
             }
@@ -532,6 +637,7 @@ fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
             errors.join("; ")
         )
     })?;
+    log::warn!("Fallback parent kill sent to MaaPiCli: pid={pid}, reason={reason}");
 
     if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
         errors.push("stopped only the parent process".to_string());
@@ -546,16 +652,20 @@ fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn stop_maa_process_tree(process: &mut MaaChildProcess) -> Result<(), String> {
+fn stop_maa_process_tree(process: &mut MaaChildProcess, reason: &str) -> Result<(), String> {
+    let pid = process.child.id();
     if process.poll_exit()?.is_none() {
         process
             .child
             .kill()
             .map_err(|error| format!("Failed to stop MaaPiCli process: {error}"))?;
+        log::info!("Kill sent to MaaPiCli process: pid={pid}, reason={reason}");
 
         if !process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
             return Err("Timed out waiting for MaaPiCli to exit after kill".to_string());
         }
+    } else {
+        log::info!("MaaPiCli already exited before stop: pid={pid}, reason={reason}");
     }
 
     Ok(())
@@ -673,6 +783,185 @@ fn ensure_maa_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
 
     prepare_dev_runtime_root(&repo_root, &runtime_root)?;
     Ok(runtime_root)
+}
+
+fn resolve_bridge_debug_log_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_local_data_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    Ok(resolve_debug_log_dir(app_local_data_dir))
+}
+
+fn prepare_runtime_debug_dir(runtime_root: &Path, shared_debug_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(shared_debug_dir)
+        .map_err(|error| format!("Failed to create shared debug directory: {error}"))?;
+
+    let runtime_debug_dir = runtime_root.join("debug");
+    if paths_point_to_same_location(&runtime_debug_dir, shared_debug_dir) {
+        return Ok(());
+    }
+
+    if fs::symlink_metadata(&runtime_debug_dir).is_ok() {
+        if paths_point_to_same_location(&runtime_debug_dir, shared_debug_dir) {
+            return Ok(());
+        }
+
+        if is_link_like_dir(&runtime_debug_dir) {
+            remove_link_like_dir(&runtime_debug_dir)?;
+        } else {
+            move_dir_contents(&runtime_debug_dir, shared_debug_dir)?;
+            fs::remove_dir_all(&runtime_debug_dir).map_err(|error| {
+                format!("Failed to remove runtime debug directory before redirecting logs: {error}")
+            })?;
+        }
+    }
+
+    create_debug_dir_redirect(&runtime_debug_dir, shared_debug_dir)
+}
+
+fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+#[cfg(windows)]
+fn is_link_like_dir(path: &Path) -> bool {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    fs::symlink_metadata(path)
+        .map(|metadata| (metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_link_like_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn remove_link_like_dir(path: &Path) -> Result<(), String> {
+    fs::remove_dir(path)
+        .or_else(|_| fs::remove_file(path))
+        .map_err(|error| format!("Failed to remove existing runtime debug link: {error}"))
+}
+
+#[cfg(windows)]
+fn create_debug_dir_redirect(link_path: &Path, target_path: &Path) -> Result<(), String> {
+    if let Some(parent) = link_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create runtime debug parent directory: {error}"))?;
+    }
+
+    let mut command = Command::new("cmd");
+    command
+        .args(["/C", "mklink", "/J"])
+        .arg(link_path)
+        .arg(target_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let status = command
+        .status()
+        .map_err(|error| format!("Failed to create runtime debug junction: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "mklink failed while redirecting Maa logs: {status}"
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn create_debug_dir_redirect(link_path: &Path, target_path: &Path) -> Result<(), String> {
+    if let Some(parent) = link_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create runtime debug parent directory: {error}"))?;
+    }
+
+    std::os::unix::fs::symlink(target_path, link_path)
+        .map_err(|error| format!("Failed to create runtime debug symlink: {error}"))
+}
+
+fn move_dir_contents(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| format!("Failed to create {target:?}: {error}"))?;
+
+    for entry in
+        fs::read_dir(source).map_err(|error| format!("Failed to read {source:?}: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            move_dir_contents(&source_path, &target_path)?;
+            fs::remove_dir_all(&source_path).map_err(|error| {
+                format!("Failed to remove moved directory {source_path:?}: {error}")
+            })?;
+        } else {
+            let target_path = available_target_path(&target_path);
+            match fs::rename(&source_path, &target_path) {
+                Ok(()) => {}
+                Err(_) => {
+                    fs::copy(&source_path, &target_path).map_err(|error| {
+                        format!("Failed to copy {source_path:?} to {target_path:?}: {error}")
+                    })?;
+                    fs::remove_file(&source_path).map_err(|error| {
+                        format!("Failed to remove moved file {source_path:?}: {error}")
+                    })?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn available_target_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "log".to_string());
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy());
+
+    for index in 1.. {
+        let file_name = match &extension {
+            Some(extension) => format!("{stem}-{index}.{extension}"),
+            None => format!("{stem}-{index}"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!()
+}
+
+fn migrate_legacy_bridge_log_dir(
+    runtime_root: &Path,
+    shared_debug_dir: &Path,
+) -> Result<(), String> {
+    let legacy_log_dir = runtime_root.join("log");
+    if !legacy_log_dir.is_dir() || paths_point_to_same_location(&legacy_log_dir, shared_debug_dir) {
+        return Ok(());
+    }
+
+    move_dir_contents(&legacy_log_dir, shared_debug_dir)?;
+    fs::remove_dir_all(&legacy_log_dir)
+        .map_err(|error| format!("Failed to remove legacy bridge log directory: {error}"))
 }
 
 fn runtime_source_candidates(app: &AppHandle) -> Vec<PathBuf> {
@@ -916,6 +1205,26 @@ fn task_key(game_id: &str, feature_id: &str) -> String {
     format!("{game_id}:{feature_id}")
 }
 
+fn format_maa_exit_status(success: bool, exit_code: Option<i32>) -> String {
+    let exit_code = exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "<signal_or_unknown>".to_string());
+    format!("success={success}, exit_code={exit_code}")
+}
+
+fn resolve_install_root() -> Result<PathBuf, String> {
+    std::env::current_exe()
+        .map(|path| install_root_from_exe_path(&path))
+        .map_err(|error| format!("Failed to resolve current executable path: {error}"))
+}
+
+fn install_root_from_exe_path(exe_path: &Path) -> PathBuf {
+    exe_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn build_global_options(request: &MaaTaskStartRequest) -> Vec<Value> {
     if request.global_option_key.is_empty() || request.global_settings_values.is_empty() {
         return Vec::new();
@@ -1077,6 +1386,21 @@ fn parse_window_id(target_window: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_runtime_debug_dir_with_shared_debug_link() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime_root = temp.path().join("runtime");
+        let shared_debug_dir = temp.path().join("install").join("debug");
+        fs::create_dir_all(runtime_root.join("debug")).expect("runtime debug dir");
+        fs::write(runtime_root.join("debug").join("old.log"), "old").expect("old log");
+
+        prepare_runtime_debug_dir(&runtime_root, &shared_debug_dir).expect("prepare debug dir");
+        fs::write(runtime_root.join("debug").join("probe.log"), "probe").expect("probe log");
+
+        assert!(shared_debug_dir.join("old.log").is_file());
+        assert!(shared_debug_dir.join("probe.log").is_file());
+    }
 
     fn request() -> MaaTaskStartRequest {
         MaaTaskStartRequest {
@@ -1278,6 +1602,30 @@ mod tests {
                 "values": []
               }
             ])
+        );
+    }
+
+    #[test]
+    fn formats_maa_exit_status_for_lifecycle_logs() {
+        assert_eq!(
+            format_maa_exit_status(true, Some(0)),
+            "success=true, exit_code=0"
+        );
+        assert_eq!(
+            format_maa_exit_status(false, Some(1)),
+            "success=false, exit_code=1"
+        );
+        assert_eq!(
+            format_maa_exit_status(false, None),
+            "success=false, exit_code=<signal_or_unknown>"
+        );
+    }
+
+    #[test]
+    fn resolves_install_root_from_executable_path() {
+        assert_eq!(
+            install_root_from_exe_path(Path::new("C:/Program Files/MaaToolbox/MaaToolbox.exe")),
+            PathBuf::from("C:/Program Files/MaaToolbox")
         );
     }
 }
