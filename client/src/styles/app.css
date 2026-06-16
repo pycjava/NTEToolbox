@@ -381,10 +381,20 @@ h3 {
 }
 
 .run-running,
-.run-starting,
 .run-stopping {
   background: var(--color-primary-soft);
   color: var(--color-primary-strong);
+}
+
+.run-starting {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  animation: badge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .run-failed {

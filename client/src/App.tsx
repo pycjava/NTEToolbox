@@ -210,7 +210,7 @@ function App() {
     if (!game || !feature) return;
 
     if (runState === "running") {
-      setState((current) => setFeatureRunState(current, gameId, featureId, "running"));
+      setState((current) => setFeatureRunState(current, gameId, featureId, "starting"));
       void invoke<MaaTaskRunResponse>("start_maa_task", {
         request: {
           gameId,
@@ -531,8 +531,10 @@ function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowPro
             结束任务
           </button>
         ) : (
-          <button className="primary-action" type="button" onClick={() => onRunChange(gameId, feature.id, "running")}>
-            <Play size={17} />
+          <button className="primary-action" type="button"
+            disabled={currentRunState === "starting"}
+            onClick={() => onRunChange(gameId, feature.id, "running")}>
+            {currentRunState === "starting" ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
             启动
           </button>
         )}
