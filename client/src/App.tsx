@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -481,13 +481,14 @@ function FeatureList({ game, onConfigure, onRunChange }: FeatureListProps) {
 
   return (
     <div className="feature-list">
-      {game.features.map((feature) => (
+      {game.features.map((feature, index) => (
         <FeatureRow
           feature={feature}
           gameId={game.id}
           key={feature.id}
           onConfigure={onConfigure}
           onRunChange={onRunChange}
+          rowIndex={index}
         />
       ))}
     </div>
@@ -499,15 +500,20 @@ type FeatureRowProps = {
   gameId: string;
   onConfigure: (feature: FeatureDefinition) => void;
   onRunChange: (gameId: string, featureId: string, runState: RunState) => void;
+  rowIndex: number;
 };
 
-function FeatureRow({ feature, gameId, onConfigure, onRunChange }: FeatureRowProps) {
+function FeatureRow({ feature, gameId, onConfigure, onRunChange, rowIndex }: FeatureRowProps) {
   const Icon = getFeatureIcon(feature.id);
   const currentRunState = feature.runState ?? "idle";
   const isRunning = runningStates.has(currentRunState);
 
   return (
-    <article className={`feature-row ${isRunning ? "running" : ""}`} aria-label={`${feature.name} 功能行`}>
+    <article
+      className={`feature-row ${isRunning ? "running" : ""}`}
+      aria-label={`${feature.name} 功能行`}
+      style={{ "--row-index": rowIndex } as React.CSSProperties}
+    >
       <div className="drag-handle" aria-hidden="true">
         <span />
         <span />
@@ -771,10 +777,14 @@ function MutopiaMidiBrowser({
 
       {filteredEntries.length > 0 ? (
         <div className="mutopia-list">
-          {filteredEntries.map((entry) => {
+          {filteredEntries.map((entry, index) => {
             const isDownloaded = downloadedIds.has(entry.id);
             return (
-              <article className="mutopia-item" key={entry.id}>
+              <article
+                className="mutopia-item"
+                key={entry.id}
+                style={{ "--row-index": index } as React.CSSProperties}
+              >
                 <div className="mutopia-copy">
                   <div className="mutopia-title-line">
                     <h4>{entry.title}</h4>
@@ -973,39 +983,68 @@ type ViewToggleProps = {
   onViewChange: (view: "features" | "live" | "library") => void;
 };
 
+const VIEW_TOGGLE_ORDER: Array<"features" | "live" | "library"> = ["features", "live", "library"];
+
 function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState({ x: 0, w: 0, ready: false });
+
+  function measureIndicator() {
+    const container = containerRef.current;
+    const activeBtn = btnRefs.current[activeView];
+    if (!container || !activeBtn) return;
+    const containerRect = container.getBoundingClientRect();
+    const btnRect = activeBtn.getBoundingClientRect();
+    setIndicator({
+      x: btnRect.left - containerRect.left,
+      w: btnRect.width,
+      ready: true
+    });
+  }
+
+  // useLayoutEffect 在浏览器 paint 前同步执行，
+  // 避免 useEffect（paint 后）导致指示器先以 0 宽度闪现一帧。
+  useLayoutEffect(() => {
+    measureIndicator();
+  }, [activeView]);
+
+  // resize 监听仍用 useEffect（无需阻塞 paint）。
+  useEffect(() => {
+    const handleResize = () => measureIndicator();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [activeView]);
+
   return (
-    <div className="view-toggle" role="tablist" aria-label="视图切换">
-      <button
-        className={`view-toggle-btn ${activeView === "features" ? "active" : ""}`}
-        role="tab"
-        aria-selected={activeView === "features"}
-        type="button"
-        onClick={() => onViewChange("features")}
-      >
-        <Gamepad2 size={18} />
-        功能列表
-      </button>
-      <button
-        className={`view-toggle-btn ${activeView === "live" ? "active" : ""}`}
-        role="tab"
-        aria-selected={activeView === "live"}
-        type="button"
-        onClick={() => onViewChange("live")}
-      >
-        <Monitor size={18} />
-        实时视图
-      </button>
-      <button
-        className={`view-toggle-btn ${activeView === "library" ? "active" : ""}`}
-        role="tab"
-        aria-selected={activeView === "library"}
-        type="button"
-        onClick={() => onViewChange("library")}
-      >
-        <Music2 size={18} />
-        MIDI 曲库
-      </button>
+    <div className="view-toggle" role="tablist" aria-label="视图切换" ref={containerRef}>
+      <span
+        className="view-toggle-indicator"
+        aria-hidden="true"
+        style={{
+          transform: `translateX(${indicator.x}px)`,
+          width: `${indicator.w}px`,
+          opacity: indicator.ready ? 1 : 0
+        }}
+      />
+      {VIEW_TOGGLE_ORDER.map((view) => {
+        const Icon = view === "features" ? Gamepad2 : view === "live" ? Monitor : Music2;
+        const label = view === "features" ? "功能列表" : view === "live" ? "实时视图" : "MIDI 曲库";
+        return (
+          <button
+            key={view}
+            ref={(el) => { btnRefs.current[view] = el; }}
+            className={`view-toggle-btn ${activeView === view ? "active" : ""}`}
+            role="tab"
+            aria-selected={activeView === view}
+            type="button"
+            onClick={() => onViewChange(view)}
+          >
+            <Icon size={18} />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

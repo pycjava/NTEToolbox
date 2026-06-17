@@ -151,7 +151,7 @@ describe("App", () => {
     expect(within(dialog).queryByDisplayValue("screenshots/s_fish")).toBeNull();
   });
 
-  it("keeps running state inline on the feature row after launch", () => {
+  it("keeps running state inline on the feature row after launch", async () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
 
@@ -160,7 +160,11 @@ describe("App", () => {
 
     fireEvent.click(within(fishRow).getByRole("button", { name: "启动" }));
 
-    expect(within(fishRow).getByText("运行中")).toBeTruthy();
+    // 点击后先进入 starting（启动中）过渡态
+    expect(within(fishRow).getByText("启动中")).toBeTruthy();
+
+    // start_maa_task 异步 resolve 后进入 running（运行中）
+    await waitFor(() => expect(within(fishRow).getByText("运行中")).toBeTruthy());
     expect(within(fishRow).queryByRole("button", { name: "暂停" })).toBeNull();
     expect(within(fishRow).getByRole("button", { name: "结束任务" })).toBeTruthy();
     expect(within(pianoRow).getByText("就绪")).toBeTruthy();

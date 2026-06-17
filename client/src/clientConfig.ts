@@ -87,7 +87,9 @@ export function applyPersistedClientConfig(
               ...game.controller,
               controllerType: savedGame.controller?.controllerType ?? game.controller.controllerType,
               targetWindow: savedGame.controller?.targetWindow ?? game.controller.targetWindow,
-              connected: Boolean(savedGame.controller?.targetWindow)
+              // 启动时一律视为未连接：旧的 targetWindow 可能让对应窗口已不存在，
+              // 真正的连接需要用户重新选择窗口后建立。
+              connected: false
             }
           : game.controller,
         features: game.features.map((feature) => {

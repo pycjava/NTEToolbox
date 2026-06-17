@@ -34,18 +34,34 @@ select:focus-visible {
 }
 
 .app-shell {
+  position: relative;
   min-height: 100vh;
   padding: 18px 24px 26px;
-  background: var(--color-canvas);
+  background:
+    radial-gradient(circle at 100% 0%, rgb(22 119 255 / 7%), transparent 42%),
+    radial-gradient(circle at 0% 100%, rgb(249 115 22 / 4%), transparent 38%),
+    var(--color-canvas);
 }
 
 .top-bar {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto auto auto;
   gap: 14px;
   align-items: center;
   min-height: 64px;
   margin-bottom: 18px;
+}
+
+.top-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border), transparent);
+  pointer-events: none;
 }
 
 .brand-block {
@@ -127,15 +143,21 @@ h3 {
   background: transparent;
   color: #687081;
   transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    transform 160ms ease;
+    background-color var(--dur-fast) var(--ease-out-soft),
+    color var(--dur-fast) var(--ease-out-soft),
+    transform var(--dur-fast) var(--ease-out-soft);
 }
 
 .icon-button:hover,
 .row-icon-button:hover {
   background: var(--color-surface-muted);
   color: var(--color-text);
+  transform: scale(1.08);
+}
+
+.icon-button:active,
+.row-icon-button:active {
+  transform: scale(0.94);
 }
 
 .game-switcher {
@@ -149,6 +171,7 @@ h3 {
 }
 
 .game-icon {
+  position: relative;
   width: 52px;
   height: 40px;
   border: 0;
@@ -156,9 +179,18 @@ h3 {
   background: transparent;
   color: #5f6674;
   transition:
-    background-color 160ms ease,
-    box-shadow 160ms ease,
-    color 160ms ease;
+    background-color var(--dur-fast) var(--ease-out-soft),
+    box-shadow var(--dur-fast) var(--ease-out-soft),
+    color var(--dur-fast) var(--ease-out-soft),
+    transform var(--dur-fast) var(--ease-out-soft);
+}
+
+.game-icon:hover {
+  transform: translateY(-1px);
+}
+
+.game-icon:active {
+  transform: translateY(0) scale(0.96);
 }
 
 .game-icon span {
@@ -179,6 +211,19 @@ h3 {
   background: var(--color-surface);
   color: var(--color-warning);
   box-shadow: 0 7px 20px rgb(15 23 42 / 8%);
+}
+
+.game-icon.selected::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-warning);
+  transform: translateX(-50%);
+  box-shadow: 0 0 8px rgb(249 115 22 / 55%);
 }
 
 .content-panel {
@@ -237,6 +282,7 @@ h3 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
   background: var(--color-surface-muted);
+  box-shadow: var(--shadow-card);
 }
 
 .connection-row {
@@ -276,6 +322,7 @@ h3 {
 }
 
 .status-dot {
+  position: relative;
   width: 10px;
   height: 10px;
   border-radius: 999px;
@@ -285,6 +332,26 @@ h3 {
 
 .status-dot.connected {
   background: var(--color-success);
+}
+
+.status-dot.connected::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--color-success);
+  animation: status-ring 2s var(--ease-out-soft) infinite;
+}
+
+@keyframes status-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
 }
 
 .connection-status .status-text {
@@ -305,6 +372,7 @@ h3 {
 }
 
 .feature-row {
+  position: relative;
   display: grid;
   grid-template-columns: 26px 52px minmax(0, 1fr) auto;
   gap: 16px;
@@ -314,19 +382,53 @@ h3 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
   background: var(--color-surface);
+  box-shadow: var(--shadow-card);
   transition:
-    border-color 160ms ease,
-    background-color 160ms ease,
-    box-shadow 160ms ease;
+    border-color var(--dur-fast) var(--ease-out-soft),
+    background-color var(--dur-fast) var(--ease-out-soft),
+    box-shadow var(--dur-normal) var(--ease-out-soft),
+    transform var(--dur-normal) var(--ease-out-soft);
 }
 
 .feature-row:hover {
   border-color: #bfd4f2;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
 }
 
 .feature-row.running {
   border-color: var(--color-border-strong);
   background: linear-gradient(90deg, var(--color-primary-soft), var(--color-surface) 62%);
+  overflow: hidden;
+}
+
+.feature-row.running::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgb(255 255 255 / 38%),
+    transparent
+  );
+  transform: skewX(-18deg);
+  animation: sheen 3.5s var(--ease-in-out-soft) infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.feature-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes sheen {
+  0% { left: -60%; }
+  55%, 100% { left: 130%; }
 }
 
 .drag-handle {
@@ -384,6 +486,7 @@ h3 {
 .run-stopping {
   background: var(--color-primary-soft);
   color: var(--color-primary-strong);
+  animation: badge-breathe 2.4s ease-in-out infinite;
 }
 
 .run-starting {
@@ -395,6 +498,11 @@ h3 {
 @keyframes badge-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+@keyframes badge-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.82; }
 }
 
 .run-failed {
@@ -425,10 +533,11 @@ h3 {
   border-radius: 12px;
   font-weight: 750;
   transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    transform 160ms ease;
+    background-color var(--dur-fast) var(--ease-out-soft),
+    color var(--dur-fast) var(--ease-out-soft),
+    border-color var(--dur-fast) var(--ease-out-soft),
+    transform var(--dur-fast) var(--ease-out-soft),
+    box-shadow var(--dur-fast) var(--ease-out-soft);
 }
 
 .primary-action {
@@ -440,11 +549,30 @@ h3 {
 .primary-action:hover {
   background: var(--color-primary-strong);
   border-color: var(--color-primary-strong);
+  box-shadow: 0 8px 20px rgb(22 119 255 / 28%);
+}
+
+.primary-action:active,
+.secondary-action:active {
+  transform: translateY(1px);
 }
 
 .primary-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+  background-image: linear-gradient(
+    100deg,
+    var(--color-primary) 30%,
+    rgb(255 255 255 / 35%) 50%,
+    var(--color-primary) 70%
+  );
+  background-size: 200% 100%;
+  animation: btn-loading 1.4s linear infinite;
+}
+
+@keyframes btn-loading {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 
 .secondary-action {
@@ -469,7 +597,9 @@ h3 {
   place-items: center;
   padding: 24px;
   background: rgb(15 23 42 / 18%);
+  backdrop-filter: blur(2px);
   z-index: 20;
+  animation: backdrop-in var(--dur-normal) var(--ease-out-soft);
 }
 
 .modal-panel {
@@ -481,6 +611,23 @@ h3 {
   border-radius: 20px;
   background: var(--color-surface);
   box-shadow: var(--shadow-soft);
+  animation: modal-in var(--dur-slow) var(--ease-out-soft);
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .modal-header {
@@ -693,6 +840,18 @@ h3 {
   border: 1px solid var(--color-border);
   border-radius: 12px;
   background: var(--color-surface-muted);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--dur-fast) var(--ease-out-soft),
+    box-shadow var(--dur-normal) var(--ease-out-soft),
+    transform var(--dur-normal) var(--ease-out-soft);
+}
+
+.mutopia-item:hover {
+  border-color: #bfd4f2;
+  background: var(--color-surface);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
 }
 
 .mutopia-copy {
@@ -905,6 +1064,7 @@ h3 {
 /* ── View Toggle ─────────────────────────────────────────────────── */
 
 .view-toggle {
+  position: relative;
   display: flex;
   gap: 4px;
   width: min(1060px, 100%);
@@ -914,7 +1074,24 @@ h3 {
   background: var(--color-surface-muted);
 }
 
+.view-toggle-indicator {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  height: calc(100% - 8px);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: 0 4px 12px rgb(15 23 42 / 8%);
+  transition:
+    transform var(--dur-normal) var(--ease-out-soft),
+    width var(--dur-normal) var(--ease-out-soft);
+  z-index: 0;
+  will-change: transform, width;
+}
+
 .view-toggle-btn {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -928,20 +1105,15 @@ h3 {
   font-size: 14px;
   font-weight: 700;
   transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease;
+    color var(--dur-fast) var(--ease-out-soft);
 }
 
 .view-toggle-btn:hover {
-  background: var(--color-surface);
   color: var(--color-text);
 }
 
 .view-toggle-btn.active {
-  background: var(--color-surface);
   color: var(--color-primary);
-  box-shadow: 0 4px 12px rgb(15 23 42 / 8%);
 }
 
 /* ── Live View Panel ──────────────────────────────────────────────── */
@@ -1036,4 +1208,87 @@ h3 {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── 入场与切换动效 ──────────────────────────────────────────────── */
+
+.feature-row,
+.mutopia-item {
+  animation: row-in var(--dur-slow) var(--ease-out-soft) both;
+  animation-delay: calc(var(--row-index, 0) * 40ms);
+}
+
+/* 仅动画 opacity，避免与 hover 的 transform 冲突 */
+@keyframes row-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feature-list,
+.mutopia-panel,
+.live-view-panel {
+  animation: view-in var(--dur-normal) var(--ease-out-soft);
+}
+
+/* ── 自定义滚动条 ─────────────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(22 119 255 / 35%) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(22 119 255 / 35%);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(22 119 255 / 55%);
+}
+
+/* ── 聚焦态增强 ───────────────────────────────────────────────────── */
+
+.feature-row:focus-visible,
+.game-icon:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgb(22 119 255 / 24%),
+    var(--shadow-card);
+}
+
+/* ── reduced-motion 全局降级 ──────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .modal-backdrop {
+    backdrop-filter: none;
+  }
 }
