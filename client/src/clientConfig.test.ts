@@ -222,4 +222,66 @@ describe("client config persistence", () => {
       "S级鱼截图冷却时间"
     );
   });
+
+  it("persists and restores appearance theme", () => {
+    const data = buildClientDataFromInterface(interfaceConfig);
+    const savedState = buildInitialClientState(data.initialGames);
+    // 模拟用户在设置里选了 dark
+    savedState.theme = "dark";
+
+    const persisted = buildPersistedClientConfig(savedState, data.nteOptions);
+    expect(persisted.appearance?.theme).toBe("dark");
+
+    const restored = applyPersistedClientConfig(
+      buildInitialClientState(data.initialGames),
+      persisted
+    );
+    expect(restored.theme).toBe("dark");
+  });
+
+  it("defaults appearance theme to system when absent", () => {
+    const data = buildClientDataFromInterface(interfaceConfig);
+    const persisted = buildPersistedClientConfig(
+      buildInitialClientState(data.initialGames),
+      data.nteOptions
+    );
+    // 没有 appearance 字段（旧配置）
+    delete (persisted as Partial<typeof persisted>).appearance;
+
+    const restored = applyPersistedClientConfig(
+      buildInitialClientState(data.initialGames),
+      persisted
+    );
+    expect(restored.theme).toBe("system");
+  });
+
+  it("persists and restores last opened game id", () => {
+    const data = buildClientDataFromInterface(interfaceConfig);
+    const savedState = buildInitialClientState(data.initialGames);
+    savedState.lastOpenedGameId = "nte";
+
+    const persisted = buildPersistedClientConfig(savedState, data.nteOptions);
+    expect(persisted.lastOpenedGameId).toBe("nte");
+
+    const restored = applyPersistedClientConfig(
+      buildInitialClientState(data.initialGames),
+      persisted
+    );
+    expect(restored.lastOpenedGameId).toBe("nte");
+  });
+
+  it("persists and restores adminPromptEnabled", () => {
+    const data = buildClientDataFromInterface(interfaceConfig);
+    const savedState = buildInitialClientState(data.initialGames);
+    savedState.adminPromptEnabled = false;
+
+    const persisted = buildPersistedClientConfig(savedState, data.nteOptions);
+    expect(persisted.adminPromptEnabled).toBe(false);
+
+    const restored = applyPersistedClientConfig(
+      buildInitialClientState(data.initialGames),
+      persisted
+    );
+    expect(restored.adminPromptEnabled).toBe(false);
+  });
 });

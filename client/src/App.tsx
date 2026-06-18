@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -6,8 +6,10 @@ import {
   Download,
   Fish,
   Gamepad2,
+  Info,
   Library,
   Loader2,
+  type LucideIcon,
   Monitor,
   Music2,
   Pencil,
@@ -17,7 +19,9 @@ import {
   Settings,
   Sparkles,
   Square,
-  Upload
+  Upload,
+  X,
+  XCircle
 } from "lucide-react";
 
 import {
@@ -35,12 +39,15 @@ import {
   buildInitialClientState,
   getVisibleOptionKeys,
   refreshWindows,
+  resolveTheme,
   selectGame,
+  setAdminPromptEnabled,
   setControllerType,
   setFeatureOptionValues,
   setFeatureRunState,
   setGlobalSettingsValues,
   setTargetWindow,
+  setTheme,
   type ClientState,
   type ControllerState,
   type FeatureDefinition,
@@ -48,11 +55,21 @@ import {
   type InputOptionDefinition,
   type OptionDefinition,
   type OptionValue,
+  type RunState,
   type SelectOptionDefinition,
   type SwitchOptionDefinition,
-  type RunState,
+  type ThemeMode,
   type WindowInfo
 } from "./clientModel";
+import {
+  addToast,
+  createToast,
+  dismissToast,
+  pruneToasts,
+  TOAST_TTL_MS,
+  type Toast,
+  type ToastKind
+} from "./toast";
 
 type DialogFeature = {
   gameId: string;
@@ -130,10 +147,28 @@ function App() {
   const [activeView, setActiveView] = useState<"features" | "live" | "library">("features");
   const [mutopiaCache, setMutopiaCache] = useState<MutopiaMidiEntry[] | null>(null);
   const stateRef = useRef(state);
+  const { toasts, pushToast, dismiss } = useToasts();
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // 主题应用：解析 theme → documentElement.dataset.theme。
+  // system 模式监听 prefers-color-scheme 变化实时切换。
+  useEffect(() => {
+    const apply = () => {
+      document.documentElement.dataset.theme = resolveTheme(state.theme);
+    };
+    apply();
+
+    if (state.theme !== "system") return;
+    // 防御：jsdom 等无 matchMedia 的环境跳过监听（resolveTheme 已安全降级）
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => apply();
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, [state.theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +180,7 @@ function App() {
       })
       .catch((error) => {
         console.error("Failed to load client config", error);
+        pushToast("error", "加载配置失败");
       });
 
     return () => {
@@ -200,6 +236,7 @@ function App() {
     });
     setConfigTarget(null);
     persistClientConfig(nextState ?? stateRef.current);
+    pushToast("info", "配置已保存");
   }
 
   function handleRunChange(gameId: string, featureId: string, runState: RunState) {
@@ -233,6 +270,7 @@ function App() {
         .catch((error) => {
           console.error("Failed to start Maa task", error);
           setState((current) => setFeatureRunState(current, gameId, featureId, "failed"));
+          pushToast("error", "启动任务失败");
         });
       return;
     }
@@ -246,6 +284,7 @@ function App() {
         .catch((error) => {
           console.error("Failed to stop Maa task", error);
           setState((current) => setFeatureRunState(current, gameId, featureId, "failed"));
+          pushToast("error", "结束任务失败");
         });
       return;
     }
@@ -253,14 +292,18 @@ function App() {
     setState((current) => setFeatureRunState(current, gameId, featureId, runState));
   }
 
-  function handleSaveSettings(values: Record<string, OptionValue>) {
+  function handleSaveSettings(values: Record<string, OptionValue>, theme?: ThemeMode, adminPromptEnabled?: boolean) {
     let nextState: ClientState | null = null;
     setState((current) => {
-      nextState = setGlobalSettingsValues(current, values);
-      return nextState;
+      let next = setGlobalSettingsValues(current, values);
+      if (theme !== undefined) next = setTheme(next, theme);
+      if (adminPromptEnabled !== undefined) next = setAdminPromptEnabled(next, adminPromptEnabled);
+      nextState = next;
+      return next;
     });
     setIsSettingsOpen(false);
     persistClientConfig(nextState ?? stateRef.current);
+    pushToast("info", "设置已保存");
   }
 
   function handleControllerTypeChange(gameId: string, controllerType: string) {
@@ -284,6 +327,7 @@ function App() {
       .catch((error) => {
         console.error("Failed to enumerate windows", error);
         setState((current) => refreshWindows(current, gameId, []));
+        pushToast("error", "刷新窗口列表失败");
       });
   }
 
@@ -293,6 +337,7 @@ function App() {
       config: buildPersistedClientConfig(nextState, nteOptions)
     }).catch((error) => {
       console.error("Failed to save client config", error);
+      pushToast("error", "保存配置失败");
     });
   }
 
@@ -367,6 +412,7 @@ function App() {
             <LiveViewPanel
               targetWindow={selectedGame.controller?.targetWindow ?? ""}
               connected={selectedGame.controller?.connected ?? false}
+              onError={(message) => pushToast("error", message)}
             />
           )}
         </section>
@@ -386,10 +432,14 @@ function App() {
       {isSettingsOpen ? (
         <SettingsDialog
           settingsValues={state.settingsValues}
+          theme={state.theme}
+          adminPromptEnabled={state.adminPromptEnabled}
           onClose={() => setIsSettingsOpen(false)}
           onSave={handleSaveSettings}
         />
       ) : null}
+
+      <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </main>
   );
 }
@@ -407,20 +457,26 @@ function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWin
 
   return (
     <div className="connection-bar">
-      <div className="connection-row">
-        <span className="connection-label">控制器类型</span>
-        <select
-          value={controller.controllerType}
-          onChange={(event) => onControllerTypeChange(gameId, event.target.value)}
-        >
-          {controllerTypes.map((type) => (
-            <option key={type} value={type}>{type}</option>
-          ))}
-        </select>
+      <div className="connection-header">
+        <div className="connection-status">
+          <span className={`status-dot ${controller.connected ? "connected" : ""}`} />
+          <span className="status-text">{controller.connected ? "已连接" : "未连接"}</span>
+        </div>
       </div>
-      <div className="connection-row">
-        <span className="connection-label">目标窗口</span>
-        <div className="connection-control">
+      <div className="connection-grid">
+        <div className="connection-row">
+          <span className="connection-label">控制器类型</span>
+          <select
+            value={controller.controllerType}
+            onChange={(event) => onControllerTypeChange(gameId, event.target.value)}
+          >
+            {controllerTypes.map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
+        <div className="connection-row">
+          <span className="connection-label">目标窗口</span>
           <select
             value={controller.targetWindow}
             onChange={(event) => onTargetWindowChange(gameId, event.target.value)}
@@ -430,14 +486,10 @@ function ConnectionBar({ gameId, controller, onControllerTypeChange, onTargetWin
               <option key={win.hwnd} value={win.hwnd}>{win.title} ({win.className})</option>
             ))}
           </select>
-          <button className="icon-button" type="button" aria-label="刷新窗口列表" title="刷新窗口列表" onClick={() => onRefreshWindows(gameId)}>
-            <RefreshCw size={18} />
-          </button>
         </div>
-      </div>
-      <div className="connection-status">
-        <span className={`status-dot ${controller.connected ? "connected" : ""}`} />
-        <span className="status-text">{controller.connected ? "已连接" : "未连接"}</span>
+        <button className="icon-button connection-refresh" type="button" aria-label="刷新窗口列表" title="刷新窗口列表" onClick={() => onRefreshWindows(gameId)}>
+          <RefreshCw size={18} />
+        </button>
       </div>
     </div>
   );
@@ -908,14 +960,24 @@ function InputOption({
 
 function SettingsDialog({
   settingsValues,
+  theme,
+  adminPromptEnabled,
   onClose,
   onSave
 }: {
   settingsValues: Record<string, OptionValue>;
+  theme: ThemeMode;
+  adminPromptEnabled: boolean;
   onClose: () => void;
-  onSave: (values: Record<string, OptionValue>) => void;
+  onSave: (
+    values: Record<string, OptionValue>,
+    theme: ThemeMode,
+    adminPromptEnabled: boolean
+  ) => void;
 }) {
   const [values, setValues] = useState<Record<string, OptionValue>>(() => ({ ...settingsValues }));
+  const [draftTheme, setDraftTheme] = useState<ThemeMode>(theme);
+  const [draftAdminPrompt, setDraftAdminPrompt] = useState<boolean>(adminPromptEnabled);
 
   function updateValue(name: string, value: OptionValue) {
     setValues((current) => ({
@@ -941,17 +1003,26 @@ function SettingsDialog({
           <OptionField option={globalSettingsOption} values={values} onChange={updateValue} />
           <label className="field-group compact">
             <span>主题</span>
-            <select defaultValue="light">
+            <select value={draftTheme} onChange={(event) => setDraftTheme(event.target.value as ThemeMode)}>
               <option value="light">浅色</option>
+              <option value="dark">暗色</option>
               <option value="system">跟随系统</option>
             </select>
           </label>
           <label className="toggle-row">
-            <input type="checkbox" defaultChecked />
+            <input
+              type="checkbox"
+              checked
+              disabled
+            />
             <span>启动时打开上次游戏</span>
           </label>
           <label className="toggle-row">
-            <input type="checkbox" defaultChecked />
+            <input
+              type="checkbox"
+              checked={draftAdminPrompt}
+              onChange={(event) => setDraftAdminPrompt(event.target.checked)}
+            />
             <span>需要管理员权限时提示</span>
           </label>
         </div>
@@ -960,7 +1031,7 @@ function SettingsDialog({
           <button className="secondary-action" type="button" onClick={onClose}>
             取消
           </button>
-          <button className="primary-action" type="button" onClick={() => onSave(values)}>
+          <button className="primary-action" type="button" onClick={() => onSave(values, draftTheme, draftAdminPrompt)}>
             保存
           </button>
         </div>
@@ -1052,9 +1123,10 @@ function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
 type LiveViewPanelProps = {
   targetWindow: string;
   connected: boolean;
+  onError: (message: string) => void;
 };
 
-function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
+function LiveViewPanel({ targetWindow, connected, onError }: LiveViewPanelProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(20);
@@ -1138,6 +1210,7 @@ function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
       }
       invoke("stop_live_view").catch((err) => {
         console.error("Failed to stop live view", err);
+        onError("停止实时视图失败");
       });
     };
   }, [targetWindow, connected, fps]);
@@ -1193,6 +1266,92 @@ function LiveViewPanel({ targetWindow, connected }: LiveViewPanelProps) {
           )
         )}
       </div>
+    </div>
+  );
+}
+
+type UseToastsResult = {
+  toasts: Toast[];
+  pushToast: (kind: ToastKind, message: string) => void;
+  dismiss: (id: number) => void;
+};
+
+/**
+ * Toast 状态管理 hook。
+ * push 时按 TTL 自动调度消失；超过可见上限自动裁剪最旧的。
+ */
+function useToasts(): UseToastsResult {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const clearTimer = useCallback((id: number) => {
+    const timer = timersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
+  }, []);
+
+  const dismiss = useCallback((id: number) => {
+    clearTimer(id);
+    setToasts((current) => dismissToast(current, id));
+  }, [clearTimer]);
+
+  const pushToast = useCallback((kind: ToastKind, message: string) => {
+    const toast = createToast(kind, message);
+    setToasts((current) => pruneToasts(addToast(current, toast)));
+
+    const timer = setTimeout(() => {
+      timersRef.current.delete(toast.id);
+      setToasts((current) => dismissToast(current, toast.id));
+    }, TOAST_TTL_MS[kind]);
+    timersRef.current.set(toast.id, timer);
+  }, []);
+
+  // 卸载时清理所有未触发的定时器
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+
+  return { toasts, pushToast, dismiss };
+}
+
+const TOAST_ICON: Record<ToastKind, LucideIcon> = {
+  success: CheckCircle2,
+  error: XCircle,
+  info: Info
+};
+
+function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div className="toast-viewport" aria-live="polite" aria-atomic="false">
+      {toasts.map((toast) => {
+        const Icon = TOAST_ICON[toast.kind];
+        return (
+          <div
+            key={toast.id}
+            className={`toast toast-${toast.kind}`}
+            role={toast.kind === "error" ? "alert" : "status"}
+          >
+            <span className="toast-icon" aria-hidden="true">
+              <Icon size={18} />
+            </span>
+            <span className="toast-message">{toast.message}</span>
+            <button
+              className="toast-close"
+              type="button"
+              aria-label="关闭通知"
+              onClick={() => onDismiss(toast.id)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

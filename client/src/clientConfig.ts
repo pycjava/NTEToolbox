@@ -15,6 +15,14 @@ export type PersistedFeatureConfig = {
 export type PersistedClientConfig = {
   version: 1;
   settingsValues: Record<string, OptionValue>;
+  /** 外观/主题设置（向后兼容：旧配置无此字段） */
+  appearance?: {
+    theme: "light" | "dark" | "system";
+  };
+  /** 上次打开的游戏 id */
+  lastOpenedGameId?: string;
+  /** 管理员权限提示开关——仅持久化，行为待接入 */
+  adminPromptEnabled?: boolean;
   games: Record<string, {
     controller?: {
       controllerType: string;
@@ -31,6 +39,9 @@ export function buildPersistedClientConfig(
   return {
     version: 1,
     settingsValues: { ...state.settingsValues },
+    appearance: { theme: state.theme ?? "system" },
+    lastOpenedGameId: state.lastOpenedGameId,
+    adminPromptEnabled: state.adminPromptEnabled ?? true,
     games: Object.fromEntries(
       state.games.map((game) => [
         game.id,
@@ -70,8 +81,21 @@ export function applyPersistedClientConfig(
 ): ClientState {
   if (!config) return state;
 
+  const theme = config.appearance?.theme ?? "system";
+  const lastOpenedGameId = config.lastOpenedGameId && state.games.some((g) => g.id === config.lastOpenedGameId)
+    ? config.lastOpenedGameId
+    : state.lastOpenedGameId;
+  // selectedGameId 优先恢复到上次打开的游戏（仍保持 connected:false）
+  const restoredSelectedId = lastOpenedGameId && state.games.some((g) => g.id === lastOpenedGameId)
+    ? lastOpenedGameId
+    : state.selectedGameId;
+
   return {
     ...state,
+    selectedGameId: restoredSelectedId,
+    theme,
+    lastOpenedGameId,
+    adminPromptEnabled: config.adminPromptEnabled ?? true,
     settingsValues: {
       ...state.settingsValues,
       ...(config.settingsValues ?? {})

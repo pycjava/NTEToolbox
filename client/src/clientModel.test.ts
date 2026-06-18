@@ -1,14 +1,18 @@
+// @vitest-environment jsdom
+// clientModel 含 resolveTheme，需要 window.matchMedia（浏览器状态模型用 jsdom 更贴合）
 import { describe, expect, it } from "vitest";
 
 import {
   addGame,
   buildInitialClientState,
   getVisibleOptionKeys,
+  resolveTheme,
   selectGame,
   setFeatureConfig,
   setFeatureOptionValue,
   setFeatureRunState,
   setGlobalSettingsValues,
+  setTheme,
   type GameDefinition,
   type OptionDefinition
 } from "./clientModel";
@@ -386,5 +390,71 @@ describe("client model", () => {
     expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图");
     expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图_设置");
     expect(assist.configSummary).toBe("自动拾取 关闭 · 永远拾取 关闭");
+  });
+
+  describe("theme", () => {
+    it("defaults to system theme", () => {
+      const state = buildState();
+
+      expect(state.theme).toBe("system");
+    });
+
+    it("resolves explicit light and dark themes as-is", () => {
+      expect(resolveTheme("light")).toBe("light");
+      expect(resolveTheme("dark")).toBe("dark");
+    });
+
+    it("resolves system theme by consulting prefers-color-scheme", () => {
+      const original = window.matchMedia;
+      // 模拟系统深色
+      window.matchMedia = (query: string) =>
+        ({
+          matches: query.includes("dark"),
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false
+        }) as unknown as MediaQueryList;
+
+      try {
+        expect(resolveTheme("system")).toBe("dark");
+      } finally {
+        window.matchMedia = original;
+      }
+    });
+
+    it("falls back to light when system prefers light", () => {
+      const original = window.matchMedia;
+      window.matchMedia = (query: string) =>
+        ({
+          matches: false,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false
+        }) as unknown as MediaQueryList;
+
+      try {
+        expect(resolveTheme("system")).toBe("light");
+      } finally {
+        window.matchMedia = original;
+      }
+    });
+
+    it("updates theme via setTheme reducer", () => {
+      const state = buildState();
+      const next = setTheme(state, "dark");
+
+      expect(next.theme).toBe("dark");
+      // 不应污染其余状态
+      expect(next.selectedGameId).toBe(state.selectedGameId);
+      expect(next.games).toBe(state.games);
+    });
   });
 });

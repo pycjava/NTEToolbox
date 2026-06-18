@@ -3,6 +3,12 @@ export type RunState = "idle" | "starting" | "running" | "stopping" | "completed
 export type OptionValue = boolean | string;
 export type PipelineOverride = Record<string, unknown>;
 
+/** 用户可选择的主题模式；system 跟随操作系统 prefers-color-scheme */
+export type ThemeMode = "light" | "dark" | "system";
+
+/** 解析后的实际主题（不含 system） */
+export type ResolvedTheme = "light" | "dark";
+
 export type OptionInputDefinition = {
   name: string;
   label: string;
@@ -92,7 +98,27 @@ export type ClientState = {
   selectedGameId: string;
   games: GameDefinition[];
   settingsValues: Record<string, OptionValue>;
+  /** 主题模式，默认 "system" */
+  theme: ThemeMode;
+  /** 上次打开的游戏 id，用于启动时恢复选中（connected 仍需重选窗口） */
+  lastOpenedGameId?: string;
+  /** 管理员权限提示开关——仅持久化，行为待 Rust 配合接入（TODO） */
+  adminPromptEnabled: boolean;
 };
+
+/**
+ * 把 ThemeMode 解析成实际生效的浅/深主题。
+ * 显式 light/dark 原样返回；system 查询 prefers-color-scheme。
+ * 在无 window 环境（SSR / 纯 Node 测试）安全降级为 light。
+ */
+export function resolveTheme(theme: ThemeMode): ResolvedTheme {
+  if (theme === "light" || theme === "dark") return theme;
+  // 测试/SSR 环境无 window，降级浅色
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 export function buildFeatureConfigSummary(feature: FeatureDefinition): string {
   const values = { ...feature.optionValues };
@@ -174,23 +200,34 @@ function cloneGames(games: GameDefinition[]): GameDefinition[] {
 
 export function buildInitialClientState(
   games: GameDefinition[],
-  settingsValues: Record<string, OptionValue> = {}
+  settingsValues: Record<string, OptionValue> = {},
+  overrides: { theme?: ThemeMode; lastOpenedGameId?: string; adminPromptEnabled?: boolean } = {}
 ): ClientState {
   const clonedGames = cloneGames(games);
+  const initialSelectedId = overrides.lastOpenedGameId && clonedGames.some((g) => g.id === overrides.lastOpenedGameId)
+    ? overrides.lastOpenedGameId
+    : clonedGames[0]?.id ?? "";
 
   return {
-    selectedGameId: clonedGames[0]?.id ?? "",
+    selectedGameId: initialSelectedId,
     games: clonedGames,
-    settingsValues: { ...settingsValues }
+    settingsValues: { ...settingsValues },
+    theme: overrides.theme ?? "system",
+    // 初始即记录当前选中游戏，保证持久化总有 lastOpenedGameId
+    lastOpenedGameId: initialSelectedId || undefined,
+    adminPromptEnabled: overrides.adminPromptEnabled ?? true
   };
 }
 
 export function selectGame(state: ClientState, gameId: string): ClientState {
   const exists = state.games.some((game) => game.id === gameId);
 
+  if (!exists) return state;
+
   return {
     ...state,
-    selectedGameId: exists ? gameId : state.selectedGameId
+    selectedGameId: gameId,
+    lastOpenedGameId: gameId
   };
 }
 
@@ -205,6 +242,14 @@ export function setGlobalSettingsValues(
       ...values
     }
   };
+}
+
+export function setTheme(state: ClientState, theme: ThemeMode): ClientState {
+  return { ...state, theme };
+}
+
+export function setAdminPromptEnabled(state: ClientState, enabled: boolean): ClientState {
+  return { ...state, adminPromptEnabled: enabled };
 }
 
 export function setControllerType(

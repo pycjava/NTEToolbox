@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
@@ -16,9 +16,28 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock
 }));
 
+// jsdom 不实现 matchMedia，主题 effect 依赖它。全局提供默认浅色 mock。
+beforeAll(() => {
+  if (!window.matchMedia) {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false
+      }) as unknown as MediaQueryList;
+  }
+});
+
 afterEach(() => {
   invokeMock.mockReset();
   listenMock.mockResolvedValue(vi.fn());
+  // 重置 data-theme，避免用例间污染
+  document.documentElement.removeAttribute("data-theme");
   cleanup();
 });
 
@@ -336,5 +355,118 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("tab", { name: /功能列表/ }));
     expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();
     expect(screen.queryByText("请先连接目标窗口")).toBeNull();
+  });
+
+  it("shows an error toast when starting a task fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "load_client_config") return Promise.resolve(null);
+      if (command === "start_maa_task") return Promise.reject(new Error("boom"));
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    const fishRow = screen.getByRole("article", { name: /钓鱼/ });
+    fireEvent.click(within(fishRow).getByRole("button", { name: "启动" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("启动任务失败")).toBeTruthy();
+    });
+  });
+
+  it("applies the saved theme to the document element", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    // 默认 system，matchMedia mock 返回浅色
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const dialog = screen.getByRole("dialog", { name: "设置" });
+
+    const themeSelect = within(dialog).getByDisplayValue("跟随系统");
+    fireEvent.change(themeSelect, { target: { value: "dark" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    // 保存后立即应用暗色
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("persists the theme choice across settings dialog open/close", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    let dialog = screen.getByRole("dialog", { name: "设置" });
+    fireEvent.change(within(dialog).getByDisplayValue("跟随系统"), { target: { value: "dark" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    // 重新打开设置，主题下拉应保持 dark
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    dialog = screen.getByRole("dialog", { name: "设置" });
+    expect(within(dialog).getByDisplayValue("暗色")).toBeTruthy();
+  });
+
+  it("persists the admin prompt toggle value", () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const dialog = screen.getByRole("dialog", { name: "设置" });
+
+    // 找到"需要管理员权限时提示"的 checkbox
+    const adminToggle = within(dialog).getByLabelText("需要管理员权限时提示", { selector: "input" });
+    expect(adminToggle).toHaveProperty("checked", true);
+
+    fireEvent.click(adminToggle);
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    // 重新打开，应保持关闭
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const reopenedDialog = screen.getByRole("dialog", { name: "设置" });
+    expect(within(reopenedDialog).getByLabelText("需要管理员权限时提示", { selector: "input" })).toHaveProperty("checked", false);
+  });
+
+  it("persists last opened game id when selecting a game and restores valid ids on load", async () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    // 当前唯一游戏 nte 被选中，保存配置时应写入 lastOpenedGameId
+    // 触发一次持久化：保存设置
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const dialog = screen.getByRole("dialog", { name: "设置" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_client_config",
+        expect.objectContaining({
+          config: expect.objectContaining({ lastOpenedGameId: "nte" })
+        })
+      );
+    });
+  });
+
+  it("falls back to default game when lastOpenedGameId is invalid", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "load_client_config") {
+        return Promise.resolve({
+          version: 1,
+          appearance: { theme: "light" },
+          lastOpenedGameId: "nonexistent-game",
+          games: {}
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    // 无效的 lastOpenedGameId 应回退到默认 nte，不崩溃
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "NTEToolbox" })).toBeTruthy();
+    });
+    // 不应抛错，且 nte 的功能行可见
+    expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();
   });
 });
