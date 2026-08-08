@@ -28,7 +28,9 @@ $distDir = Join-Path $repoRoot "dist"
 $appDir = Join-Path $distDir "HsCoach"
 
 # 1. 依赖就绪：hslog/httpx（本项目运行时依赖）+ PyInstaller
-Invoke-Step "python" @("-m", "pip", "install", "hslog>=1.19.0", "httpx>=0.27")
+# 注意：不要写 "hslog>=1.19.0" 这类带 > 的参数——PowerShell 5.1 会把
+# 原生命令参数里的 > 当成重定向，在 CWD 生成一个 "0.27" 垃圾文件。
+Invoke-Step "python" @("-m", "pip", "install", "hslog", "httpx")
 Invoke-Step "python" @("-m", "pip", "install", "pyinstaller")
 
 # 2. PyInstaller 构建（onedir）
