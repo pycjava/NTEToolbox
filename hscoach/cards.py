@@ -65,8 +65,6 @@ class Card:
     health: int | None
     type: str  # MINION / SPELL / WEAPON / HERO / ...
     card_class: str
-    mechanics: tuple[str, ...]
-    rarity: str
 
 
 class CardDatabase:
@@ -143,8 +141,6 @@ class CardDatabase:
                     health=entry.get("health"),
                     type=entry.get("type", ""),
                     card_class=entry.get("cardClass", ""),
-                    mechanics=tuple(entry.get("mechanics", [])),
-                    rarity=entry.get("rarity", ""),
                 )
 
         # 先加载全卡（含教程卡等非收集卡），再用收集卡覆盖

@@ -34,6 +34,13 @@ DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_TIMEOUT = 120.0  # 推理模型（如 deepseek-v4-flash）需要较长时间
 DEFAULT_MAX_RETRIES = 2
 
+# 建议 kind 的合法取值（唯一词典，overlay 图标等均以此为准）
+KINDS = ("play", "trade", "pass", "uncertain")
+
+
+class AdviceParseError(ValueError):
+    """LLM 输出无法解析为合法建议（格式错误，重试/降级处理）。"""
+
 
 @dataclass
 class Advice:
@@ -49,8 +56,8 @@ class Advice:
     degraded: bool = False  # True=降级（超时/失败用了兜底）
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        return d
+        """序列化契约（advice.json 与 overlay 消费的字段）。"""
+        return asdict(self)
 
 
 class LLMClient(Protocol):
@@ -117,6 +124,20 @@ def _player_view(players: dict, pid) -> dict:
     return players.get(pid) or players.get(str(pid)) or players.get(int(pid)) or {}
 
 
+def _format_board(cards: list) -> list[str]:
+    """格式化一方场面的文本行（攻/血/受伤/关键词）。"""
+    if not cards:
+        return ["  （空场）"]
+    lines = []
+    for c in cards:
+        atk = f"{c['attack']}/{c['health']}"
+        if c.get("damaged"):
+            atk += f"(受伤{c['damaged']})"
+        flags = f" [{', '.join(c['flags'])}]" if c.get("flags") else ""
+        lines.append(f"  - {c['name']} {atk}{flags}".rstrip())
+    return lines
+
+
 def build_user_prompt(snapshot: GameSnapshot, friendly_player_id: int) -> str:
     """把快照转成给 LLM 的 user prompt（结构化局面文本）。"""
     d = snapshot.to_dict()
@@ -138,15 +159,8 @@ def build_user_prompt(snapshot: GameSnapshot, friendly_player_id: int) -> str:
         flags = f" [{', '.join(c['flags'])}]" if c.get("flags") else ""
         lines.append(f"  - {c['name']}（{c.get('cost', '?')}费）{atk}{flags} {c.get('text', '')}".rstrip())
 
-    lines.append(f"场面：")
-    for c in friendly.get("board", []):
-        atk = f"{c['attack']}/{c['health']}"
-        if c.get("damaged"):
-            atk += f"(受伤{c['damaged']})"
-        flags = f" [{', '.join(c['flags'])}]" if c.get("flags") else ""
-        lines.append(f"  - {c['name']} {atk}{flags}".rstrip())
-    if not friendly.get("board"):
-        lines.append("  （空场）")
+    lines.append("场面：")
+    lines += _format_board(friendly.get("board", []))
 
     lines += [
         f"牌库剩余：{friendly.get('deck_count', 0)} 张",
@@ -154,16 +168,9 @@ def build_user_prompt(snapshot: GameSnapshot, friendly_player_id: int) -> str:
         "【对手】",
         f"英雄：{opponent.get('health', '?')} 血 {opponent.get('armor', 0)} 护甲",
         f"手牌：{opponent.get('hand', {}).get('count', '?')} 张（隐藏，不知具体）",
-        f"场面：",
+        "场面：",
     ]
-    for c in opponent.get("board", []):
-        atk = f"{c['attack']}/{c['health']}"
-        if c.get("damaged"):
-            atk += f"(受伤{c['damaged']})"
-        flags = f" [{', '.join(c['flags'])}]" if c.get("flags") else ""
-        lines.append(f"  - {c['name']} {atk}{flags}".rstrip())
-    if not opponent.get("board"):
-        lines.append("  （空场）")
+    lines += _format_board(opponent.get("board", []))
 
     lines += [
         f"对手牌库剩余：{opponent.get('deck_count', 0)} 张",
@@ -174,21 +181,30 @@ def build_user_prompt(snapshot: GameSnapshot, friendly_player_id: int) -> str:
 
 
 def _parse_advice(raw: str) -> Advice:
-    """从 LLM 原始输出解析出 Advice。解析失败返回 uncertain 兜底。"""
+    """从 LLM 原始输出解析出 Advice。
+
+    Raises:
+        AdviceParseError: 输出里没有 JSON 对象、JSON 非法、或不是对象
+            （list/字符串等）。由 get_advice 统一走重试/降级（T6：非法建议
+            拒发，不把垃圾当建议发布）。
+    """
     # 尝试提取 JSON（LLM 可能在 JSON 前后加解释文字）
     text = raw.strip()
     # 找第一个 { 到最后一个 }
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end < 0 or end <= start:
-        return Advice(kind="uncertain", headline="（教练未能解析建议）", why=raw[:200])
+        raise AdviceParseError("输出中未找到 JSON 对象")
     try:
         data = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return Advice(kind="uncertain", headline="（教练输出格式有误）", why=raw[:200])
+    except json.JSONDecodeError as e:
+        raise AdviceParseError(f"JSON 解析失败: {e}") from e
+    if not isinstance(data, dict):
+        # 例如 LLM 返回了 ["play", ...] 或一段纯文本——不是建议对象
+        raise AdviceParseError(f"JSON 不是对象，而是 {type(data).__name__}")
 
     kind = data.get("kind", "uncertain")
-    if kind not in ("play", "trade", "pass", "uncertain"):
+    if kind not in KINDS:
         kind = "uncertain"
     # steps 可能是列表或字符串（LLM 有时不按格式返回字符串）
     raw_steps = data.get("steps", [])
@@ -236,12 +252,12 @@ def get_advice(
             advice = _parse_advice(raw)
             advice.latency_ms = int((time.monotonic() - start) * 1000)
             return advice
-        except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:  # noqa: BLE001
+        except Exception as e:  # 网络错误与格式错误都算一次失败，可重试
             last_err = e
             logger.warning("LLM 调用失败（第 %d 次）：%s", attempt + 1, e)
             continue
 
-    # 全部失败 → 降级
+    # 全部失败 → 降级（优先用上一回合建议，其次诚实占位）
     advice = fallback or Advice(
         kind="uncertain",
         headline="（教练暂时无法响应）",

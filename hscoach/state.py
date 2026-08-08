@@ -1,16 +1,19 @@
 """T5(05) 状态序列化：对局快照 → LLM 局面表示（含 D9 合法信息过滤）。
 
 把 hslog 解析出的 Game 对象序列化成给 LLM 的结构化局面：
-- 己方手牌（含卡名/费用/效果）
+- 己方手牌（含卡名/费用/效果/CardID）
 - 双方场面随从/英雄（攻血/关键词/效果）
 - 双方英雄血量/护甲、当前法力
-- 己方牌库剩余计数
-- 对手出牌史（已揭示的）
+- 双方牌库剩余计数
 
 D9 合法信息约束（硬约束，代码级断言保证）：
+D9 是需求梳理阶段的第 9 条决策——只读合法可见信息（详见
+.scratch/hearthstone-coach/spec.md 的 D9 节）：
 - 对手手牌只暴露数量，绝不暴露具体卡牌
 - 对手牌库内容不暴露
 - 序列化时 assert：对手手牌实体若有 CardID，直接拒绝输出
+- 友方玩家 id 可自动校准（见 detect_friendly_player_id），避免把
+  对手手牌当成己方输出
 
 设计参考：barnabys live.py snapshot_from_tree + format_snapshot 的精华
 （卡牌文本内联、flags 显式化、只喂合法信息）。
@@ -40,12 +43,18 @@ _FLAG_TAGS: dict[str, GameTag] = {
     "免疫": GameTag.IMMUNE,
     "休眠": GameTag.DORMANT,
     "无法攻击": GameTag.CANT_ATTACK,
+    "已尽": GameTag.EXHAUSTED,  # 已行动/攻击过，本回合不能再用
+    "不可被法术指定": GameTag.CANT_BE_TARGETED_BY_SPELLS,
 }
 
 
 @dataclass
 class CardView:
-    """局面中一张卡的精简视图（含注入的卡牌效果文本）。"""
+    """局面中一张卡的精简视图（含注入的卡牌效果文本）。
+
+    card_id 只对己方可见卡有意义：对手手牌不生成 CardView（只见数量），
+    对手场上的卡是公开信息、带 CardID 合法。
+    """
 
     card_id: str | None
     name: str
@@ -54,17 +63,18 @@ class CardView:
     health: int | None
     flags: list[str] = field(default_factory=list)
     text: str = ""  # 卡牌效果（来自卡牌库，非模型记忆）
-    damage: int = 0  # 受伤减血（在场随从上）
+    damaged: int = 0  # 受伤减血（在场随从上）
 
     def to_dict(self) -> dict:
         return {
+            "card_id": self.card_id,
             "name": self.name,
             "cost": self.cost,
             "attack": self.attack,
             "health": self.health,
             "flags": self.flags,
             "text": self.text,
-            "damaged": self.damage or None,
+            "damaged": self.damaged or None,
         }
 
 
@@ -108,14 +118,12 @@ class GameSnapshot:
     turn: int
     current_player_id: int | None
     players: dict[int, PlayerView]  # player_id → view
-    opponent_played: list[CardView] = field(default_factory=list)  # 对手已打出的牌
 
     def to_dict(self) -> dict:
         return {
             "turn": self.turn,
             "current_player_id": self.current_player_id,
             "players": {pid: pv.to_dict() for pid, pv in self.players.items()},
-            "opponent_played": [c.to_dict() for c in self.opponent_played],
         }
 
 
@@ -144,7 +152,7 @@ def _entity_to_cardview(entity, db: CardDatabase | None) -> CardView:
     cost = tags.get(GameTag.COST)
     attack = tags.get(GameTag.ATK)
     health = tags.get(GameTag.HEALTH)
-    damage = tags.get(GameTag.DAMAGE, 0) or 0
+    damaged = tags.get(GameTag.DAMAGE, 0) or 0
 
     return CardView(
         card_id=card_id,
@@ -154,7 +162,7 @@ def _entity_to_cardview(entity, db: CardDatabase | None) -> CardView:
         health=health,
         flags=_extract_flags(tags),
         text=text,
-        damage=damage,
+        damaged=damaged,
     )
 
 
@@ -173,6 +181,33 @@ def _assert_no_opponent_hand_leak(entities_in_hand: list, player_id: int) -> Non
             )
 
 
+def detect_friendly_player_id(game) -> int | None:
+    """从对局推断友方玩家 id（日志自动校准，D9 防线）。
+
+    原理：炉石客户端日志只对本地（友方）玩家的手牌写 CardID；对手手牌
+    永远只有实体、无 CardID（这正是 D9 约束的前提）。因此"手牌含 CardID
+    的玩家"即友方。
+
+    Returns:
+        唯一候选的玩家 id；手牌都为空（如开局调度阶段）或双方手牌都有
+        CardID（观战等异常场景）时返回 None，表示暂无法判断。
+    """
+    candidates = []
+    for player in game.players:
+        pid = getattr(player, "player_id", None)
+        if pid is None:
+            continue
+        hand = [
+            e for e in game.in_zone(Zone.HAND)
+            if e.tags.get(GameTag.CONTROLLER) == pid
+        ]
+        if any(getattr(e, "card_id", None) for e in hand):
+            candidates.append(pid)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def serialize_game(game, friendly_player_id: int, db: CardDatabase | None = None) -> GameSnapshot:
     """把 hslog Game 序列化成合法可见快照。
 
@@ -188,11 +223,18 @@ def serialize_game(game, friendly_player_id: int, db: CardDatabase | None = None
         AssertionError: D9 检测到对手手牌可能泄露 CardID
     """
     players_view: dict[int, PlayerView] = {}
-    opponent_played: list[CardView] = []
 
     # 当前回合与玩家
     turn = game.tags.get(GameTag.TURN, 0)
+    # 当前玩家：部分日志在 GameEntity 上写 CURRENT_PLAYER（值是玩家 id）；
+    # 另一些（如本仓库 fixture）只写在玩家实体上（value=0/1 置位）——
+    # GameEntity 上没有 → 从玩家实体反推
     current_player_id = game.tags.get(GameTag.CURRENT_PLAYER)
+    if current_player_id is None:
+        for player in game.players:
+            if player.tags.get(GameTag.CURRENT_PLAYER) == 1:
+                current_player_id = getattr(player, "player_id", None)
+                break
 
     for player in game.players:
         pid = getattr(player, "player_id", None)
@@ -263,5 +305,4 @@ def serialize_game(game, friendly_player_id: int, db: CardDatabase | None = None
         turn=turn,
         current_player_id=current_player_id,
         players=players_view,
-        opponent_played=opponent_played,
     )

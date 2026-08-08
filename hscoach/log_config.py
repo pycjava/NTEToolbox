@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,40 +197,78 @@ def tail_power_log(poll_interval: float = 0.5):
     文件不存在时等待其出现（炉石首次写日志会创建）。
     用于实时监听对局。
 
+    健壮性（踩坑修复）：
+    - 国服每次启动炉石会新建 Logs/<时间戳>/Power.log：每次轮询重新解析
+      路径，发现新路径立即切换，不依赖句柄存活。
+    - 文件被重建（同路径重写/轮换）：Windows 上 st_ino 不可靠（常为 0），
+      改用"文件创建时间变了 或 大小比上次观测变小"检测轮换，重建后从头
+      读（含 CREATE_GAME，保证 detector.reset() 触发、跨对局状态不泄漏）。
+
     Args:
         poll_interval: 轮询间隔（秒）
     Yields:
         新增的日志行（含换行符）
     """
-    path = power_log_path()
     fp = None
-    inode = None
-    just_appeared = False
+    open_path: Path | None = None
+    just_appeared = True
+    last_ctime: float | None = None
+    last_size: int = 0
 
     try:
         while True:
-            # 等待文件出现
+            # 每次重解析路径：国服每次启动新建时间戳子目录，重启后要能发现
+            path = power_log_path()
+            if fp is not None and open_path != path:
+                logger.info("Power.log 路径变化：%s → %s", open_path, path)
+                fp.close()
+                fp = None
+                just_appeared = True
+
             if not path.exists():
+                if fp is not None:
+                    fp.close()
+                    fp = None
                 just_appeared = True
                 time.sleep(poll_interval)
                 continue
 
-            # 文件被轮换（炉石重启会重建）→ 重新打开
+            # 文件被轮换（重建）→ 重新打开并从头读
             try:
                 stat = path.stat()
-                if fp is None or inode != stat.st_ino:
-                    if fp:
-                        fp.close()
-                    fp = path.open(encoding="utf-8", errors="replace")
-                    if just_appeared:
-                        fp.seek(0)
-                    else:
-                        fp.seek(0, 2)
-                    inode = stat.st_ino
-                    just_appeared = False
             except OSError:
                 time.sleep(poll_interval)
                 continue
+
+            if fp is None:
+                fp = path.open(encoding="utf-8", errors="replace")
+                if just_appeared:
+                    fp.seek(0)  # 新出现/轮换的文件：从头读（含 CREATE_GAME）
+                else:
+                    fp.seek(0, 2)  # 已存在的文件：从末尾 tail
+                just_appeared = False
+                open_path = path
+                last_ctime = stat.st_ctime
+                last_size = stat.st_size
+            else:
+                # 轮换检测：Windows 上 st_ctime=文件创建时间（写追加不变，
+                # 重建才变）；POSIX 上 st_ctime 每次写入都变，只靠大小倒退
+                # （重建的文件比上次观测小）判定。
+                if sys.platform == "win32":
+                    rotated = stat.st_ctime != last_ctime or stat.st_size < last_size
+                else:
+                    rotated = stat.st_size < last_size
+                if rotated:
+                    logger.info("检测到 Power.log 轮换（重建），从头读")
+                    fp.close()
+                    fp = path.open(encoding="utf-8", errors="replace")
+                    fp.seek(0)
+                    open_path = path
+                    last_ctime = stat.st_ctime
+                    last_size = stat.st_size
+                else:
+                    last_ctime = stat.st_ctime
+                    last_size = stat.st_size
 
             # 读新增行
             for line in fp:

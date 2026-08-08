@@ -133,47 +133,121 @@ class LogConfigTest(unittest.TestCase):
 class TailTest(unittest.TestCase):
     # tail 涉及无限生成器+后台线程，在批量 discover 时会阻止进程干净退出。
     # 默认跳过；单独验证用：RUN_TAIL_TEST=1 python -m unittest tests.test_hearthstone_log_config
+    # 模式：worker 线程收集够需要的行数后自行 break 并在线程内 close 生成器
+    # （生成器此刻挂起在 yield 处，close 安全，不会踩"generator already
+    # executing"竞态），主线程只 join 等待。
+
+    def _run_tail_collect(self, fake_path, needed: int, timeout: float = 5.0):
+        """起一个 tail 线程收集 needed 行，返回收集到的行列表（线程已退出）。"""
+        import queue
+        import threading
+
+        collected: queue.Queue = queue.Queue()
+
+        def run_tail():
+            with patch("hscoach.log_config.power_log_path", side_effect=fake_path):
+                gen = tail_power_log(poll_interval=0.05)
+                for line in gen:
+                    collected.put(line)
+                    if collected.qsize() >= needed:
+                        break
+                gen.close()  # 线程内关闭（此时挂起在 yield 处）
+
+        t = threading.Thread(target=run_tail, daemon=True)
+        t.start()
+        lines = []
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                lines.append(collected.get(timeout=0.2))
+            except queue.Empty:
+                continue
+            if len(lines) >= needed:
+                break
+        t.join(timeout=2)
+        return lines
+
     @unittest.skipUnless(
         os.environ.get("RUN_TAIL_TEST"),
         "tail 测试默认跳过（无限生成器需单独运行）",
     )
     def test_tail_reads_new_lines(self):
-        """tail 能读到文件新增的行。用线程+事件干净退出避免挂住测试。"""
-        import queue
-        import threading
-
+        """tail 能读到文件新增的行。"""
         tmp = Path(tempfile.mkdtemp())
-        power_log = tmp / "Power.log"
-        collected: queue.Queue = queue.Queue()
-        stop_event = threading.Event()
-        gen_holder: list = []
-
-        def run_tail():
-            with patch("hscoach.log_config.power_log_path", return_value=power_log):
-                gen = tail_power_log(poll_interval=0.1)
-                gen_holder.append(gen)
-                for line in gen:
-                    if stop_event.is_set():
-                        break
-                    collected.put(line)
-                    if line.strip():
-                        break
-
-        t = threading.Thread(target=run_tail, daemon=True)
-        t.start()
-        time.sleep(0.3)
-        power_log.parent.mkdir(parents=True, exist_ok=True)
-        power_log.write_text("D 00:00:01 test line 1\n", encoding="utf-8")
-
         try:
-            line = collected.get(timeout=3)
-            self.assertIn("test line 1", line)
+            power_log = tmp / "Power.log"
+            power_log.parent.mkdir(parents=True, exist_ok=True)
+            lines = self._run_tail_collect(lambda: power_log, needed=1)
+            self.assertEqual(lines, [])
+            power_log.write_text("D 00:00:01 test line 1\n", encoding="utf-8")
+            lines = self._run_tail_collect(lambda: power_log, needed=1)
+            self.assertIn("test line 1", "".join(lines))
         finally:
-            stop_event.set()
-            # 关闭生成器底层文件句柄（防止 ResourceWarning + 挂住）
-            for g in gen_holder:
-                g.close()
-            t.join(timeout=2)
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_TAIL_TEST"),
+        "tail 测试默认跳过（无限生成器需单独运行）",
+    )
+    def test_tail_rotation_reopens_and_reads_from_start(self):
+        """文件被重建（截断重写）后，tail 应从头读（含 CREATE_GAME）。
+
+        回归：旧实现靠 st_ino 检测轮换（Windows 上恒为 0 失效），重建后
+        用旧句柄继续读、新行静默丢失；且 reopen 后 seek(0,2) 跳过重建后
+        写的内容。现在用大小倒退检测，重建后从头读。
+        """
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            power_log = tmp / "Power.log"
+            power_log.parent.mkdir(parents=True, exist_ok=True)
+            power_log.write_text("D 00:00:01 old line\n", encoding="utf-8")
+            # 第一批：旧文件从头读到 old line
+            first = self._run_tail_collect(lambda: power_log, needed=1)
+            self.assertIn("old line", "".join(first))
+            # 模拟炉石重启重建 Power.log：截断重写（大小倒退 → 轮换）
+            power_log.write_text("CREATE_GAME\nTAG_CHANGE new game\n", encoding="utf-8")
+            # 重建后的行应从头部完整读到（含 CREATE_GAME）
+            second = self._run_tail_collect(lambda: power_log, needed=2)
+            joined = "".join(second)
+            self.assertIn("CREATE_GAME", joined)
+            self.assertIn("TAG_CHANGE new game", joined)
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_TAIL_TEST"),
+        "tail 测试默认跳过（无限生成器需单独运行）",
+    )
+    def test_tail_path_change_switches_to_new_file(self):
+        """power_log_path 变化（国服每次启动新建时间戳目录）→ 切到新文件从头读。
+
+        回归：旧实现只在生成器启动时解析一次路径，国服重启后永远监听
+        旧目录、新对局日志全丢。
+        """
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            file_a = tmp / "session_a" / "Power.log"
+            file_b = tmp / "session_b" / "Power.log"
+            file_a.parent.mkdir(parents=True, exist_ok=True)
+            file_b.parent.mkdir(parents=True, exist_ok=True)
+            file_a.write_text("A old line\n", encoding="utf-8")
+            file_b.write_text("CREATE_GAME\nB new line\n", encoding="utf-8")
+
+            current = {"path": file_a}
+            first = self._run_tail_collect(lambda: current["path"], needed=1)
+            self.assertIn("A old line", "".join(first))
+
+            # 模拟炉石重启：出现新的时间戳目录 → 路径变化
+            current["path"] = file_b
+            second = self._run_tail_collect(lambda: current["path"], needed=2)
+            joined = "".join(second)
+            self.assertIn("CREATE_GAME", joined)
+            self.assertIn("B new line", joined)
+        finally:
             import shutil
 
             shutil.rmtree(tmp, ignore_errors=True)

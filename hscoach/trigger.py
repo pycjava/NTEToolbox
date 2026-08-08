@@ -3,9 +3,10 @@
 从日志流检测"轮到友方玩家回合"事件，触发 LLM 教练生成建议，
 以原子写 JSON 文件（advice.json）方式发布供 UI 消费。
 
-触发检测：监听 TAG_CHANGE ... tag=TURN value=N（回合数递增）+
-          CURRENT_PLAYER 指向友方玩家。简化实现：每当 TURN tag 递增
-          且当前是友方回合，触发一次。
+触发检测：监听 TAG_CHANGE ... tag=TURN value=N（回合数递增，写在
+GameEntity 上）+ CURRENT_PLAYER 指向友方玩家（写在玩家实体上，实体名
+PlayerOne/PlayerTwo 或数字实体 id 两种形态）。每当 TURN tag 递增且当前
+是友方回合，触发一次。
 
 发布契约（advice.json，语言无关，三期 C# WPF 可零成本复用）：
     {
@@ -23,14 +24,12 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from hearthstone.enums import GameTag
 from hscoach.coach import Advice, LLMClient, get_advice
-from hscoach.log_parser import parse_power_log
 from hscoach.state import GameSnapshot, serialize_game
 from hscoach.cards import CardDatabase
 
@@ -38,10 +37,31 @@ logger = logging.getLogger(__name__)
 
 ADVICE_FILENAME = "advice.json"
 
-# 增量检测用的正则：从原始日志行快速提取回合数，无需 hslog 全量解析
-# 格式: TAG_CHANGE Entity=N tag=TURN value=M  或  tag=CURRENT_PLAYER value=P
+# 增量检测用的正则：从原始日志行快速提取回合信息，无需 hslog 全量解析
+# 回合数写在 GameEntity 上：TAG_CHANGE Entity=GameEntity tag=TURN value=N
 _TURN_RE = re.compile(r"tag=TURN\s+value=(\d+)")
-_CURRENT_PLAYER_RE = re.compile(r"tag=CURRENT_PLAYER\s+value=(\d+)")
+# 当前玩家写在玩家实体上，实体有两种形态（名字/数字 id）：
+#   TAG_CHANGE Entity=PlayerTwo tag=CURRENT_PLAYER value=1
+#   TAG_CHANGE Entity=3 tag=CURRENT_PLAYER value=1
+# value 是 0/1 布尔置位，不是玩家 id！（踩坑：曾误把 value 当玩家 id，
+# 导致 friendly=2 永不触发、friendly=1 对方回合也误触发）
+_CURRENT_PLAYER_RE = re.compile(
+    r"Entity=(PlayerOne|PlayerTwo|\d+)\s+tag=CURRENT_PLAYER\s+value=(\d+)"
+)
+# CREATE_GAME 块里的玩家声明：Player EntityID=2 PlayerID=1 → 实体 id↔玩家 id
+_PLAYER_ENTITY_RE = re.compile(r"Player EntityID=(\d+) PlayerID=(\d+)")
+# 玩家实体名 ↔ 实体 id 是炉石协议常量（GameEntity=1、先手=2、后手=3）
+_NAME_TO_ENTITY_ID = {"PlayerOne": 2, "PlayerTwo": 3}
+
+
+def _is_new_friendly_turn(
+    turn: int,
+    current_player_id: int | None,
+    friendly_player_id: int,
+    last_turn: int,
+) -> bool:
+    """回合规则单实现：轮到友方的新回合（turn 递增 + 当前玩家是友方）。"""
+    return current_player_id == friendly_player_id and turn > last_turn
 
 
 @dataclass
@@ -50,18 +70,22 @@ class TurnTrigger:
 
     用法：每次解析完一批新日志行后，调 check_and_trigger(result, ...)，
     若检测到"轮到友方的新回合"，则生成建议并发布。
+
+    last_advice：上一回合的建议，LLM 全部失败时作为降级建议回显
+    （spec：超时降级为上一回合建议）。
     """
 
     friendly_player_id: int
     last_triggered_turn: int = 0
+    last_advice: Advice | None = None
 
     def detect_new_friendly_turn(self, snapshot: GameSnapshot) -> int | None:
         """若 snapshot 是轮到友方的新回合（turn > 上次触发的），返回 turn 号；否则 None。"""
-        if snapshot.current_player_id != self.friendly_player_id:
-            return None
-        if snapshot.turn <= self.last_triggered_turn:
-            return None
-        return snapshot.turn
+        if _is_new_friendly_turn(
+            snapshot.turn, snapshot.current_player_id, self.friendly_player_id, self.last_triggered_turn
+        ):
+            return snapshot.turn
+        return None
 
     def check_and_trigger(
         self,
@@ -80,7 +104,8 @@ class TurnTrigger:
             return None
 
         self.last_triggered_turn = new_turn
-        advice = get_advice(snapshot, client, self.friendly_player_id)
+        advice = get_advice(snapshot, client, self.friendly_player_id, fallback=self.last_advice)
+        self.last_advice = advice
         publish_advice(publish_dir, advice, new_turn)
         return advice
 
@@ -93,7 +118,8 @@ class TurnTrigger:
     ) -> Advice:
         """手动触发"再想想"：不强求 turn 递增，基于当前局面生成。"""
         snapshot = serialize_game(game, self.friendly_player_id, db)
-        advice = get_advice(snapshot, client, self.friendly_player_id)
+        advice = get_advice(snapshot, client, self.friendly_player_id, fallback=self.last_advice)
+        self.last_advice = advice
         publish_advice(publish_dir, advice, snapshot.turn)
         return advice
 
@@ -104,44 +130,85 @@ class IncrementalTurnDetector:
 
     扫描原始日志行（正则，极快），检测 TURN/CURRENT_PLAYER 变化。
     只有检测到"轮到友方的新回合"时，才回调一次全量解析+LLM。
-    避免每行都做 hslog 全量解析（46ms/次 → 正则 ~0.01ms/行）。
+    避免每行都做 hslog 全量解析（全量 ~25ms → 正则 ~0.01ms/行）。
 
     用法：
         detector = IncrementalTurnDetector(friendly_player_id=1)
-        detector.on_lines(new_lines, callback=lambda all_lines: ...)
+        for turn in detector.feed(new_lines):   # 本次触发的回合号列表
+            lines = detector.get_trigger_window(turn)  # 截至该触发点的行流
+            # 用 lines 全量解析 → 快照正好在该回合开始时刻
 
-    累积所有行，保证回调拿到的 all_lines 能解析出完整局面。
+    CURRENT_PLAYER 解析：先由 CREATE_GAME 块的 "Player EntityID=N
+    PlayerID=M" 建立 实体 id↔玩家 id 映射；再解析 CURRENT_PLAYER 行的
+    Entity 令牌（名字或数字 id）→ 玩家 id。名字↔实体 id 是协议常量。
+    注意只认 value=1 的置位行（value=0 是回合结束方，忽略）。
+
+    触发窗口：触发发生在批内某一行，同一批可能已包含下一回合的行。
+    按触发点截取行流，保证快照正是"该回合开始时刻"（否则下一回合的
+    行会把快照推到对方回合，本回合建议被吞——真实踩坑）。
     """
 
     friendly_player_id: int
     _all_lines: list[str] = field(default_factory=list)
     _last_turn: int = 0
     _current_player: int | None = None
+    _entity_to_player: dict[int, int] = field(default_factory=dict)
+    _trigger_upto: dict[int, int] = field(default_factory=dict)  # turn → 触发行数
 
-    def feed(self, lines: list[str]) -> bool:
-        """喂入新行，返回是否检测到"轮到友方的新回合"。
+    def _resolve_player_id(self, token: str) -> int | None:
+        """把 CURRENT_PLAYER 行的 Entity 令牌解析成玩家 id。"""
+        if token.isdigit():
+            eid = int(token)
+        else:
+            eid = _NAME_TO_ENTITY_ID.get(token)
+            if eid is None:
+                return None
+        # 映射优先（来自本局 CREATE_GAME）；协议兜底：实体 2=玩家1、实体 3=玩家2
+        return self._entity_to_player.get(eid, eid - 1)
 
-        内部累积所有行；检测到新回合时返回 True（此时调 get_all_lines()
-        拿全量行做解析）。未检测到返回 False。
+    def feed(self, lines: list[str]) -> list[int]:
+        """喂入新行，返回本次触发"轮到友方的新回合"的回合号列表。
+
+        内部累积所有行。每个触发点都可用 get_trigger_window(turn)
+        取截至该触发点的行流做全量解析。未触发返回空列表。
         """
-        triggered = False
+        triggered: list[int] = []
         for line in lines:
             self._all_lines.append(line)
-            # 正则快速扫描（比 hslog parse 快 1000 倍）
-            if "tag=TURN" in line:
+            if "CREATE_GAME" in line:
+                # 新对局：清空实体映射（全量 reset 由调用方负责）
+                self._entity_to_player.clear()
+            elif "Player EntityID=" in line:
+                m = _PLAYER_ENTITY_RE.search(line)
+                if m:
+                    self._entity_to_player[int(m.group(1))] = int(m.group(2))
+            elif "tag=TURN" in line:
                 m = _TURN_RE.search(line)
                 if m:
                     turn = int(m.group(1))
-                    if turn > self._last_turn:
+                    if _is_new_friendly_turn(turn, self._current_player, self.friendly_player_id, self._last_turn):
                         self._last_turn = turn
-                        # 回合变了，检查是否轮到友方
-                        if self._current_player == self.friendly_player_id:
-                            triggered = True
+                        self._trigger_upto[turn] = len(self._all_lines)
+                        triggered.append(turn)
+                    elif turn > self._last_turn:
+                        self._last_turn = turn
             elif "tag=CURRENT_PLAYER" in line:
                 m = _CURRENT_PLAYER_RE.search(line)
                 if m:
-                    self._current_player = int(m.group(1))
+                    token, flag = m.group(1), m.group(2)
+                    if flag == "1":  # 只认"轮到谁"的置位，忽略置 0 行
+                        pid = self._resolve_player_id(token)
+                        if pid is not None:
+                            self._current_player = pid
         return triggered
+
+    def get_trigger_window(self, turn: int) -> list[str]:
+        """返回截至指定触发回合（含其 TURN 行）的行流，用于全量解析。
+
+        快照正好落在该回合开始时刻；同批内后续回合的行不会污染它。
+        """
+        upto = self._trigger_upto.get(turn, len(self._all_lines))
+        return self._all_lines[:upto]
 
     def get_all_lines(self) -> list[str]:
         """返回累积的全部日志行（用于全量解析）。"""
@@ -152,6 +219,8 @@ class IncrementalTurnDetector:
         self._all_lines.clear()
         self._last_turn = 0
         self._current_player = None
+        self._entity_to_player.clear()
+        self._trigger_upto.clear()
 
 
 def publish_advice(publish_dir: Path, advice: Advice, turn: int) -> Path:
@@ -182,35 +251,3 @@ def publish_advice(publish_dir: Path, advice: Advice, turn: int) -> Path:
             pass
         raise
     return target
-
-
-def read_advice(publish_dir: Path) -> dict | None:
-    """读取已发布的 advice.json（UI 侧用）。不存在返回 None。"""
-    target = publish_dir / ADVICE_FILENAME
-    if not target.exists():
-        return None
-    try:
-        return json.loads(target.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def process_log_lines_for_trigger(
-    lines: list[str],
-    trigger: TurnTrigger,
-    db: CardDatabase | None,
-    client: LLMClient,
-    publish_dir: Path,
-) -> list[Advice]:
-    """处理一批日志行，检测并触发所有新回合建议。
-
-    简化策略：用完整行流解析出最后的 game 状态，check_and_trigger 一次。
-    （更精细的实现可按 BLOCK 边界增量检测，但一期按最终态即可。）
-    """
-    result = parse_power_log(lines)
-    advices = []
-    for game in result.games:
-        advice = trigger.check_and_trigger(game, db, client, publish_dir)
-        if advice is not None:
-            advices.append(advice)
-    return advices

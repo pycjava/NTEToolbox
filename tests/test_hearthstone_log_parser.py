@@ -5,9 +5,12 @@
 - 坏行被跳过、计数，不让整个解析崩
 - 多局文件按 CREATE_GAME 边界正确切分
 - 解析出的实体含 CardID（SHOW_ENTITY 揭示后）
+- 全量解析不卡死（回归：hslog 导出遇 TRANSFORMED_FROM_CARD 会隐式
+  下载 CardDefs.xml 挂死，已硬化禁网）
 """
 
 import logging
+import time
 import unittest
 from pathlib import Path
 
@@ -16,6 +19,7 @@ logging.disable(logging.WARNING)
 
 from hearthstone.enums import GameTag, Zone
 from hscoach.log_parser import parse_power_log, parse_power_log_file
+from tests._helpers import read_fixture_lines
 
 FIXTURE = Path(__file__).resolve().parent / "data" / "friendly_player_id_is_1.power.log"
 
@@ -24,15 +28,10 @@ class LogParserTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # 限制行数加速测试：前 1500 行已含完整开局 + 多回合
-        cls.head_lines = cls._read_head(FIXTURE, 1500)
-        # 解析一次，所有测试复用（解析 1500 行约需数秒）
+        cls.head_lines = read_fixture_lines(1500)
+        # 解析一次，所有测试复用
         cls.result = parse_power_log(cls.head_lines)
         cls.game = cls.result.games[0] if cls.result.games else None
-
-    @staticmethod
-    def _read_head(path: Path, n: int) -> list[str]:
-        with path.open(encoding="utf-8") as fp:
-            return [next(fp, "") for _ in range(n)]
 
     def test_parses_real_log_into_game(self):
         result = parse_power_log(self.head_lines)
@@ -65,6 +64,8 @@ class LogParserTest(unittest.TestCase):
         two_games = list(self.head_lines) + [""] + list(self.head_lines)
         result = parse_power_log(two_games)
         self.assertGreaterEqual(len(result.games), 2)
+        # packet_trees 与 games 一一对应（供校准推断）
+        self.assertEqual(len(result.packet_trees), len(result.games))
 
     def test_parse_file_helper(self):
         result = parse_power_log_file(FIXTURE)
@@ -83,6 +84,22 @@ class LogParserTest(unittest.TestCase):
                 self.assertTrue(any(GameTag.CONTROLLER in e.tags for e in ents))
                 break
         self.assertTrue(found_any, "前 1500 行应至少在 HAND/PLAY/DECK 某区有实体")
+
+    def test_full_fixture_parses_fast(self):
+        """全量 fixture（6596 行）解析应秒级完成。
+
+        回归保护：hslog 导出遇到第一张带 TRANSFORMED_FROM_CARD 的卡会
+        隐式下载 CardDefs.xml 把解析挂死（曾达数分钟/无限期）。硬化后
+        本地全量解析约 25ms；这里给 10s 余量防慢 CI。
+        """
+        t0 = time.monotonic()
+        result = parse_power_log(read_fixture_lines())
+        elapsed = time.monotonic() - t0
+        self.assertGreaterEqual(len(result.games), 1)
+        self.assertLess(elapsed, 10.0)
+        # 全量解析后导出的 game 是完整对局（回合数>0）
+        game = result.games[-1]
+        self.assertGreater(game.tags.get(GameTag.TURN, 0), 0)
 
 
 if __name__ == "__main__":
