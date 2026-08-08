@@ -1,0 +1,190 @@
+"""T1(02) 炉石日志自动开启 + tail 监听。
+
+自动写炉石的 log.config 开启 Power 模块日志（HDT 同款做法），
+首次运行弹窗说明 + 备份原文件供一键回滚。
+随后 tail Power.log 新增内容交给解析。
+
+⚠️ 此模块会修改用户炉石客户端配置——所有写操作前必须备份，
+并明确告知用户。绝不静默修改。
+
+log.config 格式（HDT 标准）：
+    [Zone]
+    Verbosity=1
+    [Power]
+    Verbosity=1
+    [GameState]
+    Verbosity=1
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# 炉石 LocalAppData 路径
+def hearthstone_data_dir() -> Path:
+    """返回炉石的 LocalAppData 目录（Logs 父目录）。"""
+    local = os.environ.get("LOCALAPPDATA", "")
+    return Path(local) / "Blizzard" / "Hearthstone"
+
+
+def log_config_path() -> Path:
+    return hearthstone_data_dir() / "log.config"
+
+
+def power_log_path() -> Path:
+    return hearthstone_data_dir() / "Logs" / "Power.log"
+
+
+# HDT 标准的 log.config 内容（开启 Power/Zone/GameState）
+LOG_CONFIG_CONTENT = """[Zone]
+Verbosity=1
+[Power]
+Verbosity=1
+[GameState]
+Verbosity=1
+"""
+
+BACKUP_SUFFIX = ".bak.ntetoolbox"
+
+
+@dataclass
+class LogConfigStatus:
+    """log.config 操作的结果状态。"""
+
+    action: str  # "created" / "updated" / "already_ok" / "restored"
+    path: str
+    backup_path: str | None = None
+    message: str = ""
+
+
+def ensure_log_config(backup: bool = True) -> LogConfigStatus:
+    """确保 log.config 存在且开启 Power 日志。
+
+    Args:
+        backup: 若覆盖已有文件，先备份（默认 True，安全第一）
+
+    Returns:
+        LogConfigStatus 描述做了什么。
+    """
+    target = log_config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # 已存在且内容正确 → 无需操作
+    if target.exists():
+        existing = target.read_text(encoding="utf-8", errors="ignore")
+        if "[Power]" in existing and "Verbosity=1" in existing:
+            return LogConfigStatus(
+                action="already_ok",
+                path=str(target),
+                message="log.config 已开启 Power 日志，无需修改。",
+            )
+        # 内容不符，备份后覆盖
+        bk = None
+        if backup:
+            bk = str(target) + BACKUP_SUFFIX
+            shutil.copy2(target, bk)
+        target.write_text(LOG_CONFIG_CONTENT, encoding="utf-8")
+        return LogConfigStatus(
+            action="updated",
+            path=str(target),
+            backup_path=bk,
+            message="log.config 已更新（原文件已备份）。",
+        )
+
+    # 不存在，新建
+    target.write_text(LOG_CONFIG_CONTENT, encoding="utf-8")
+    return LogConfigStatus(
+        action="created",
+        path=str(target),
+        message="log.config 已创建（首次启用炉石日志）。",
+    )
+
+
+def restore_log_config() -> LogConfigStatus:
+    """一键回滚：恢复备份的 log.config。"""
+    target = log_config_path()
+    bk = str(target) + BACKUP_SUFFIX
+    if not os.path.exists(bk):
+        # 没有备份，说明是我们创建的 → 删除即可
+        if target.exists():
+            target.unlink()
+            return LogConfigStatus(
+                action="restored",
+                path=str(target),
+                message="已删除工具创建的 log.config（炉石将停止写日志）。",
+            )
+        return LogConfigStatus(
+            action="restored",
+            path=str(target),
+            message="无需回滚（log.config 不存在且无备份）。",
+        )
+    # 有备份，恢复
+    shutil.copy2(bk, target)
+    os.remove(bk)
+    return LogConfigStatus(
+        action="restored",
+        path=str(target),
+        message="已恢复原始 log.config。",
+    )
+
+
+def tail_power_log(poll_interval: float = 0.5):
+    """生成器：持续 tail Power.log，yield 新增的行。
+
+    文件不存在时等待其出现（炉石首次写日志会创建）。
+    用于实时监听对局。
+
+    Args:
+        poll_interval: 轮询间隔（秒）
+    Yields:
+        新增的日志行（含换行符）
+    """
+    path = power_log_path()
+    fp = None
+    inode = None
+    just_appeared = False
+
+    try:
+        while True:
+            # 等待文件出现
+            if not path.exists():
+                just_appeared = True
+                time.sleep(poll_interval)
+                continue
+
+            # 文件被轮换（炉石重启会重建）→ 重新打开
+            try:
+                stat = path.stat()
+                if fp is None or inode != stat.st_ino:
+                    if fp:
+                        fp.close()
+                    fp = path.open(encoding="utf-8", errors="replace")
+                    if just_appeared:
+                        fp.seek(0)
+                    else:
+                        fp.seek(0, 2)
+                    inode = stat.st_ino
+                    just_appeared = False
+            except OSError:
+                time.sleep(poll_interval)
+                continue
+
+            # 读新增行
+            for line in fp:
+                yield line
+
+            time.sleep(poll_interval)
+    finally:
+        # 生成器被 close() 或 GC 时，确保文件句柄释放
+        if fp:
+            try:
+                fp.close()
+            except OSError:
+                pass

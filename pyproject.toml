@@ -29,8 +29,14 @@ requires-python = ">=3.14"
 Homepage = "https://github.com/op200/NTEToolbox"
 Source   = "https://github.com/op200/NTEToolbox"
 
+[project.optional-dependencies]
+hearthstone = [
+    "hslog>=1.19.0",
+    "httpx>=0.27",
+]
+
 [tool.setuptools]
-packages = ["agent"]
+packages = ["agent", "hscoach"]
 
 [tool.setuptools.dynamic]
 version = { attr = "agent._version.__version__" }

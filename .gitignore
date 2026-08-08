@@ -454,3 +454,10 @@ tools/ImageCropper/**/*.png
 
 config
 debug
+# 炉石教练开发产物
+.scratch/
+*.egg-info/
+__pycache__/
+tests/_hs_cache/
+hscoach/data/cards.*.json
+!tests/data/friendly_player_id_is_1.power.log
