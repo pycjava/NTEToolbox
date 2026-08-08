@@ -50,12 +50,26 @@ def parse_display_fields(data: dict) -> dict:
 
 
 class OverlayApp:
-    """置顶建议窗 + 独立控制窗。非阻塞启动；文件变化时刷新内容。"""
+    """置顶建议窗 + 独立控制窗。非阻塞启动；文件变化时刷新内容。
 
-    def __init__(self, advice_path: Path, on_manual_trigger=None, on_restore_log_config=None):
+    on_save_settings：设置对话框保存回调（入参 CoachConfig，返回状态
+    提示文本），由入口负责写配置 + 热切换 LLM 客户端。
+    config：当前生效配置，用于设置对话框预填。
+    """
+
+    def __init__(
+        self,
+        advice_path: Path,
+        on_manual_trigger=None,
+        on_restore_log_config=None,
+        on_save_settings=None,
+        config=None,
+    ):
         self.advice_path = advice_path
         self.on_manual_trigger = on_manual_trigger
         self.on_restore_log_config = on_restore_log_config
+        self.on_save_settings = on_save_settings
+        self.config = config
         self._click_through = True
         self._last_mtime: float = 0
         self._mode_btn = None  # 穿透切换按钮（控制窗里，run() 时创建）
@@ -136,8 +150,8 @@ class OverlayApp:
         ctrl.attributes("-topmost", True)
         ctrl.configure(bg="#313244")
         # 放在屏幕右上角，不挡游戏主要区域
-        x = self.root.winfo_screenwidth() - 300
-        ctrl.geometry(f"290x120+{x}+50")
+        x = self.root.winfo_screenwidth() - 400
+        ctrl.geometry(f"390x120+{x}+50")
 
         def btn(text, command, bg="#45475a", fg="#cdd6f4", bold=False):
             return tk.Button(
@@ -160,6 +174,9 @@ class OverlayApp:
 
         self._mode_btn = btn("🖱 关闭穿透", self._toggle_click_through)
         self._mode_btn.pack(side="left", padx=2)
+
+        settings_btn = btn("⚙ 设置", self._on_open_settings, bg="#585b70")
+        settings_btn.pack(side="left", padx=2)
 
         restore_btn = btn("↩ 还原日志配置", self._on_restore_log_config, bg="#585b70")
         restore_btn.pack(side="left", padx=2)
@@ -219,6 +236,69 @@ class OverlayApp:
         """手动触发'再想想'。"""
         if self.on_manual_trigger:
             threading.Thread(target=self.on_manual_trigger, daemon=True).start()
+
+    def _on_open_settings(self) -> None:
+        """设置对话框：API key / 模型 / API 地址，保存即生效（可自定义）。"""
+        import tkinter as tk
+
+        from hscoach.config import CoachConfig
+
+        cfg = self.config or CoachConfig()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("炉石教练设置")
+        dlg.attributes("-topmost", True)
+        dlg.configure(bg="#313244")
+        dlg.resizable(False, False)
+
+        def field(label: str, initial: str, show: str = "") -> tk.Entry:
+            row = tk.Frame(dlg, bg="#313244")
+            row.pack(fill="x", padx=8, pady=3)
+            tk.Label(row, text=label, fg="#cdd6f4", bg="#313244", width=12,
+                     font=("Microsoft YaHei", 9), anchor="w").pack(side="left")
+            var = tk.StringVar(value=initial)
+            ent = tk.Entry(row, textvariable=var, bg="#45475a", fg="#cdd6f4",
+                           show=show, insertbackground="#cdd6f4",
+                           font=("Microsoft YaHei", 9))
+            ent.pack(side="left", fill="x", expand=True)
+            return ent
+
+        key_ent = field("API key", cfg.api_key, show="*")
+        model_ent = field("模型", cfg.model)
+        url_ent = field("API 地址", cfg.base_url)
+
+        status = tk.StringVar(value="")
+
+        def on_ok():
+            api_key = key_ent.get().strip()
+            if not api_key:
+                status.set("API key 不能为空")
+                return
+            new_cfg = CoachConfig(
+                api_key=api_key,
+                model=model_ent.get().strip() or cfg.model,
+                base_url=url_ent.get().strip() or cfg.base_url,
+                friendly_player_id=cfg.friendly_player_id,
+            )
+            if self.on_save_settings:
+                msg = self.on_save_settings(new_cfg)
+                self._ctrl_status_var.set(msg)
+                self.config = new_cfg  # 下次打开对话框预填新值
+            dlg.destroy()
+
+        row = tk.Frame(dlg, bg="#313244")
+        row.pack(fill="x", padx=8, pady=(6, 2))
+        tk.Button(row, text="取消", command=dlg.destroy, bg="#45475a", fg="#cdd6f4",
+                  relief="flat", font=("Microsoft YaHei", 9)).pack(side="left")
+        tk.Button(row, text="保存", command=on_ok, bg="#a6e3a1", fg="#1e1e2e",
+                  relief="flat", font=("Microsoft YaHei", 9, "bold")).pack(side="right")
+        tk.Label(dlg, textvariable=status, fg="#f38ba8", bg="#313244",
+                 font=("Microsoft YaHei", 8), anchor="w").pack(fill="x", padx=8, pady=(0, 4))
+
+        # 居中于控制窗
+        dlg.update_idletasks()
+        x = self._ctrl.winfo_rootx() + (self._ctrl.winfo_width() - dlg.winfo_width()) // 2
+        y = self._ctrl.winfo_rooty() + (self._ctrl.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def _on_restore_log_config(self) -> None:
         """一键回滚 log.config（spec 02 的入口）。"""

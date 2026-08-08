@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +29,21 @@ RENDER_IMAGE_URL = (
     "https://art.hearthstonejson.com/v1/render/latest/{locale}/512x/{card_id}.png"
 )
 DEFAULT_LOCALE = "zhCN"
-DEFAULT_CACHE_DIR = Path(__file__).resolve().parent / "data"
+
+
+def _default_cache_dir() -> Path:
+    """卡牌库缓存目录。
+
+    打包（PyInstaller）后模块文件位于只读/临时目录，缓存必须放 exe 旁边
+    的 data/（可写、持久，构建脚本会预置离线卡牌库）。开发模式沿用
+    源码树 hscoach/data。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "data"
+    return Path(__file__).resolve().parent / "data"
+
+
+DEFAULT_CACHE_DIR = _default_cache_dir()
 
 # HearthstoneJSON 文本标记清洗：
 #   <b>...</b> / <i>...</i>  → 去标签（粗体/斜体是视觉标记）

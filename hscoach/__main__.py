@@ -16,6 +16,7 @@ from pathlib import Path
 
 from hscoach.cards import CardDatabase
 from hscoach.coach import DeepSeekClient
+from hscoach.config import effective_config, save_config
 from hscoach.log_config import ensure_log_config, power_log_path, tail_power_log
 from hscoach.log_parser import parse_power_log, parse_power_log_file
 from hscoach.overlay import OverlayApp
@@ -26,6 +27,51 @@ from hscoach.trigger import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _prompt_api_key(no_overlay: bool) -> str:
+    """首次运行引导输入 API key。
+
+    终端模式用 input()；overlay 模式用 tkinter 对话框（打包成品无终端
+    也能完成首次配置）。返回空串表示用户取消。
+    """
+    hint = "请前往 LLM 平台（如 platform.deepseek.com）申请 API key"
+    if no_overlay:
+        print(f"未配置 LLM API key。{hint}。")
+        return input("请输入 API key（直接回车取消）: ").strip()
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            key = simpledialog.askstring(
+                "炉石教练 - 首次运行",
+                f"未配置 LLM API key。\n\n{hint}。\n\n"
+                "（也可在启动参数里用 --api-key 指定）",
+                parent=root,
+            )
+        finally:
+            root.destroy()
+        return (key or "").strip()
+    except Exception as e:  # 无显示环境等，非致命
+        logger.debug("API key 对话框不可用：%s", e)
+        return ""
+
+
+class _ClientHolder:
+    """可变 LLM 客户端容器。
+
+    设置里改完 API key/模型/地址后热切换，无需重启；worker 线程每次
+    chat 都经由当前持有的客户端，替换是引用赋值，线程安全。
+    """
+
+    def __init__(self, client):
+        self.client = client
+
+    def chat(self, system: str, user: str, timeout: float | None = None) -> str:
+        return self.client.chat(system, user, timeout)
 
 
 def calibrate_friendly_player(result) -> int | None:
@@ -54,10 +100,12 @@ def calibrate_friendly_player(result) -> int | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="炉石 AI 教练")
-    parser.add_argument("--api-key", default=os.environ.get("DEEPSEEK_API_KEY", ""),
-                        help="LLM API key（默认读 DEEPSEEK_API_KEY 环境变量）")
-    parser.add_argument("--model", default="deepseek-chat", help="模型名")
-    parser.add_argument("--base-url", default="https://api.deepseek.com/v1", help="API 地址")
+    parser.add_argument("--api-key", default=None,
+                        help="LLM API key。默认按 环境变量 DEEPSEEK_API_KEY →"
+                             " 配置文件 %%APPDATA%%\\NTEToolbox\\hscoach\\config.json"
+                             " → 首次运行引导输入 的顺序解析")
+    parser.add_argument("--model", default=None, help="模型名（默认读配置文件）")
+    parser.add_argument("--base-url", default=None, help="API 地址（默认读配置文件）")
     parser.add_argument("--publish-dir", default=None, help="advice.json 发布目录")
     parser.add_argument("--friendly-player-id", type=int, default=None,
                         help="友方玩家 id（1/2）。默认不传：日志自动校准（推荐）。"
@@ -71,9 +119,30 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    if not args.api_key:
-        print("错误：未提供 API key。用 --api-key 或设置 DEEPSEEK_API_KEY 环境变量。", file=sys.stderr)
-        return 2
+    # 生效配置：命令行 > 环境变量 > 配置文件 > 默认值
+    cfg = effective_config(
+        cli_key=args.api_key,
+        cli_model=args.model,
+        cli_base_url=args.base_url,
+        cli_friendly=args.friendly_player_id,
+    )
+    if not cfg.api_key:
+        # 只有完全没给（未传 --api-key、无环境变量、无配置文件）才引导输入；
+        # 显式传了空串视为"明确不配置"，直接报错退出（不弹窗，测试/脚本友好）
+        if args.api_key is None:
+            cfg.api_key = _prompt_api_key(no_overlay=args.no_overlay)
+        if not cfg.api_key:
+            print(
+                "错误：未提供 API key。用 --api-key 或设置 DEEPSEEK_API_KEY "
+                "环境变量。",
+                file=sys.stderr,
+            )
+            return 2
+    # 记住本次配置（API key / 模型 / 地址），下次启动免输入
+    try:
+        save_config(cfg)
+    except OSError as e:
+        logger.warning("配置保存失败（不影响本次运行）：%s", e)
 
     # 1. 确保 log.config 已开启
     status = ensure_log_config()
@@ -85,8 +154,10 @@ def main(argv: list[str] | None = None) -> int:
     db.build()
     logger.info("卡牌库就绪：%d 张卡", len(db))
 
-    # 3. LLM 客户端
-    client = DeepSeekClient(api_key=args.api_key, model=args.model, base_url=args.base_url)
+    # 3. LLM 客户端（经 holder 热切换：设置里改模型/地址即时生效）
+    client_holder = _ClientHolder(
+        DeepSeekClient(api_key=cfg.api_key, model=cfg.model, base_url=cfg.base_url)
+    )
 
     # 4. 发布目录
     publish_dir = Path(args.publish_dir) if args.publish_dir else Path(tempfile.gettempdir()) / "hs-coach"
@@ -96,7 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     power_log = power_log_path()
     # friendly id 未知时先用占位 1，第一次解析后自动校准（D9 防线：
     # 校准前若映射错误，serialize_game 的 D9 断言会拒绝输出并告警）
-    friendly_player_id = args.friendly_player_id or 1
+    friendly_explicit = (
+        args.friendly_player_id is not None or cfg.friendly_player_id is not None
+    )
+    friendly_player_id = cfg.friendly_player_id or 1
     trigger = TurnTrigger(friendly_player_id=friendly_player_id)
     detector = IncrementalTurnDetector(friendly_player_id=friendly_player_id)
 
@@ -109,10 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         if calibrated is None:
             return
         if calibrated != trigger.friendly_player_id:
-            if args.friendly_player_id is not None:
+            if friendly_explicit:
                 logger.warning(
                     "自动校准：友方玩家 id 应为 %d（当前 %d，已自动纠正）。"
-                    "若你手动传过 --friendly-player-id 请核对。",
+                    "若你手动指定过请核对。",
                     calibrated, trigger.friendly_player_id,
                 )
             else:
@@ -143,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                         if result.games:
                             game = result.games[-1]
                             advice = trigger.check_and_trigger(
-                                game, db, client, publish_dir
+                                game, db, client_holder, publish_dir
                             )
                             if advice is not None:
                                 logger.info(
@@ -177,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                     apply_calibration(result)
                     if result.games:
                         game = result.games[-1]
-                        advice = trigger.manual_trigger(game, db, client, publish_dir)
+                        advice = trigger.manual_trigger(game, db, client_holder, publish_dir)
                         logger.info("手动建议：%s", advice.headline)
                 except Exception as e:  # 手动触发出错不致命
                     logger.warning("手动触发出错：%s", e)
@@ -189,10 +263,24 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("log.config 还原：%s — %s", status.action, status.message)
             return status.message
 
+        def on_save_settings(new_cfg) -> str:
+            """设置对话框保存：写配置文件 + 热切换 LLM 客户端（即时生效）。"""
+            try:
+                save_config(new_cfg)
+            except OSError as e:
+                return f"保存失败：{e}"
+            client_holder.client = DeepSeekClient(
+                api_key=new_cfg.api_key, model=new_cfg.model, base_url=new_cfg.base_url
+            )
+            logger.info("设置已更新：model=%s base_url=%s", new_cfg.model, new_cfg.base_url)
+            return "已保存并即时生效"
+
         app = OverlayApp(
             advice_path,
             on_manual_trigger=on_manual,
             on_restore_log_config=on_restore_log_config,
+            on_save_settings=on_save_settings,
+            config=cfg,
         )
         try:
             app.run()
