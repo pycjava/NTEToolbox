@@ -58,6 +58,18 @@ class ParseAdviceTest(unittest.TestCase):
         self.assertEqual(adv.headline, "出火球术")
         self.assertEqual(adv.steps, ["火球打脸"])
 
+    def test_string_steps_not_split_into_chars(self):
+        """LLM 返回字符串而非列表时，steps 不应被拆成单字。"""
+        raw = '{"kind":"pass","headline":"结束回合","why":"无法出牌","steps":"直接点击结束回合。","warning":""}'
+        adv = _parse_advice(raw)
+        self.assertEqual(adv.steps, ["直接点击结束回合。"])
+        self.assertNotEqual(adv.steps, list("直接点击结束回合。"))
+
+    def test_empty_string_steps(self):
+        raw = '{"kind":"play","headline":"x","why":"","steps":"","warning":""}'
+        adv = _parse_advice(raw)
+        self.assertEqual(adv.steps, [])
+
     def test_handles_json_wrapped_in_text(self):
         raw = '好的，分析如下：\n{"kind":"trade","headline":"交换","why":"解场","steps":[],"warning":""}\n以上。'
         adv = _parse_advice(raw)

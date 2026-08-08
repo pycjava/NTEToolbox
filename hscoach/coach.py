@@ -190,11 +190,17 @@ def _parse_advice(raw: str) -> Advice:
     kind = data.get("kind", "uncertain")
     if kind not in ("play", "trade", "pass", "uncertain"):
         kind = "uncertain"
+    # steps 可能是列表或字符串（LLM 有时不按格式返回字符串）
+    raw_steps = data.get("steps", [])
+    if isinstance(raw_steps, str):
+        steps = [raw_steps] if raw_steps.strip() else []
+    else:
+        steps = [str(s) for s in raw_steps]
     return Advice(
         kind=kind,
         headline=str(data.get("headline", "")),
         why=str(data.get("why", "")),
-        steps=list(data.get("steps", [])),
+        steps=steps,
         warning=str(data.get("warning", "")),
     )
 
