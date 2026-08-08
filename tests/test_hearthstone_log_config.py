@@ -57,7 +57,8 @@ class LogConfigTest(unittest.TestCase):
             self.assertTrue(cfg.exists())
             content = cfg.read_text(encoding="utf-8")
             self.assertIn("[Power]", content)
-            self.assertIn("Verbosity=1", content)
+            self.assertIn("FilePrinting=true", content)
+            self.assertIn("LogLevel=1", content)
 
     def test_already_ok_does_not_modify(self):
         cfg = self.fake_data_dir / "log.config"

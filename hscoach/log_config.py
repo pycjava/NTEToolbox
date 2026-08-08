@@ -27,28 +27,83 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# 炉石可能的安装目录
+_HEARTHSTONE_INSTALL_CANDIDATES = [
+    Path(os.environ.get("ProgramFiles(X86)", r"C:\Program Files (x86)")) / "Hearthstone",
+    Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Hearthstone",
+]
+
+
+def hearthstone_install_dir() -> Path | None:
+    """返回炉石安装目录。"""
+    for candidate in _HEARTHSTONE_INSTALL_CANDIDATES:
+        if (candidate / "Hearthstone.exe").exists():
+            return candidate
+    return None
+
+
 # 炉石 LocalAppData 路径
 def hearthstone_data_dir() -> Path:
-    """返回炉石的 LocalAppData 目录（Logs 父目录）。"""
+    """返回炉石的 LocalAppData 目录（log.config 所在）。"""
     local = os.environ.get("LOCALAPPDATA", "")
     return Path(local) / "Blizzard" / "Hearthstone"
 
 
 def log_config_path() -> Path:
+    """log.config 在 LocalAppData（全球版和国服都从这里读）。"""
     return hearthstone_data_dir() / "log.config"
 
 
 def power_log_path() -> Path:
+    """返回最新的 Power.log 路径。
+
+    国服炉石把日志写在安装目录的 Logs/时间戳子目录/ 下（每次启动新建子目录）。
+    全球版写在 LocalAppData/Blizzard/Hearthstone/Logs/Power.log。
+    本函数自动检测两种路径，返回最新的 Power.log。
+    """
+    # 1. 先查安装目录的时间戳子目录（国服）
+    install = hearthstone_install_dir()
+    if install:
+        logs_root = install / "Logs"
+        if logs_root.exists():
+            # 找所有含 Power.log 的时间戳子目录，取最新的
+            candidates = sorted(
+                (d for d in logs_root.iterdir() if d.is_dir() and (d / "Power.log").exists()),
+                key=lambda d: d.name,
+                reverse=True,
+            )
+            if candidates:
+                return candidates[0] / "Power.log"
+
+    # 2. 回退到 LocalAppData（全球版 / HDT 标准）
     return hearthstone_data_dir() / "Logs" / "Power.log"
 
 
-# HDT 标准的 log.config 内容（开启 Power/Zone/GameState）
-LOG_CONFIG_CONTENT = """[Zone]
-Verbosity=1
-[Power]
-Verbosity=1
+# HDT 标准的 log.config 内容（开启 Power/Zone/GameState/LoadingScreen）
+# 每个段必须独立设置 FilePrinting=true，否则炉石不写日志文件
+LOG_CONFIG_CONTENT = """[Power]
+LogLevel=1
+FilePrinting=true
+ConsolePrinting=false
+ScreenPrinting=false
+
+[Zone]
+LogLevel=1
+FilePrinting=true
+ConsolePrinting=false
+ScreenPrinting=false
+
 [GameState]
-Verbosity=1
+LogLevel=1
+FilePrinting=true
+ConsolePrinting=false
+ScreenPrinting=false
+
+[LoadingScreen]
+LogLevel=1
+FilePrinting=true
+ConsolePrinting=false
+ScreenPrinting=false
 """
 
 BACKUP_SUFFIX = ".bak.ntetoolbox"
@@ -79,11 +134,11 @@ def ensure_log_config(backup: bool = True) -> LogConfigStatus:
     # 已存在且内容正确 → 无需操作
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="ignore")
-        if "[Power]" in existing and "Verbosity=1" in existing:
+        if "[Power]" in existing and "FilePrinting=true" in existing:
             return LogConfigStatus(
                 action="already_ok",
                 path=str(target),
-                message="log.config 已开启 Power 日志，无需修改。",
+                message="log.config 已开启 Power 日志（FilePrinting=true），无需修改。",
             )
         # 内容不符，备份后覆盖
         bk = None

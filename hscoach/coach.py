@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_TIMEOUT = 30.0
+DEFAULT_TIMEOUT = 120.0  # 推理模型（如 deepseek-v4-flash）需要较长时间
 DEFAULT_MAX_RETRIES = 2
 
 
@@ -108,7 +108,7 @@ SYSTEM_PROMPT = """你是一名炉石传说构筑模式的出牌教练。根据�
    kind 取值：play（出牌/施法）、trade（交换/解场）、pass（结束回合）、uncertain（无定论）。
 5. 你的建议会显示给玩家参考，由玩家自己操作——你不是在替他打牌。
 6. 卡牌效果文本已随局面提供，请以提供的效果为准，不要凭记忆。
-7. 只输出最终 JSON，不要在 JSON 前后加任何解释文字。
+7. 只输出最终 JSON，不要在 JSON 前后加任何解释文字。推理要简短，不要逐张卡分析。
 """
 
 

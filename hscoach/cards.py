@@ -21,6 +21,9 @@ import httpx
 HEARTHSTONEJSON_CARDS_URL = (
     "https://api.hearthstonejson.com/v1/latest/{locale}/cards.collectible.json"
 )
+HEARTHSTONEJSON_ALL_CARDS_URL = (
+    "https://api.hearthstonejson.com/v1/latest/{locale}/cards.json"
+)
 RENDER_IMAGE_URL = (
     "https://art.hearthstonejson.com/v1/render/latest/{locale}/512x/{card_id}.png"
 )
@@ -83,45 +86,71 @@ class CardDatabase:
     def cache_path(self) -> Path:
         return self._cache_dir / f"cards.{self._locale}.json"
 
+    @property
+    def all_cards_cache_path(self) -> Path:
+        return self._cache_dir / f"cards.all.{self._locale}.json"
+
     def build(self, force: bool = False) -> None:
-        """构建卡牌库。优先用本地缓存；force=True 或无缓存时从网络拉取。"""
+        """构建卡牌库。优先用本地缓存；force=True 或无缓存时从网络拉取。
+
+        拉取两份数据：
+        - cards.collectible.json：收集卡（玩家可组的卡）
+        - cards.json：全卡（含非收集卡如教程卡 TUTR_、英雄技能等）
+        合并后教程卡等也能查到卡名和效果。
+        """
         with self._lock:
             if self._loaded and not force:
                 return
-            if force or not self.cache_path.exists():
+            if force or not self.cache_path.exists() or not self.all_cards_cache_path.exists():
                 self._download()
             self._load_from_cache()
             self._loaded = True
 
     def _download(self) -> None:
-        url = HEARTHSTONEJSON_CARDS_URL.format(locale=self._locale)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        with httpx.Client(timeout=60, headers={"User-Agent": "NTEToolbox/0.1"}) as client:
-            data = client.get(url).json()
-        # 原子写：先临时文件后替换
-        tmp = self.cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.cache_path)
+        with httpx.Client(timeout=120, headers={"User-Agent": "NTEToolbox/0.1"}) as client:
+            collectible = client.get(
+                HEARTHSTONEJSON_CARDS_URL.format(locale=self._locale)
+            ).json()
+            all_cards = client.get(
+                HEARTHSTONEJSON_ALL_CARDS_URL.format(locale=self._locale)
+            ).json()
+        # 原子写两份
+        for data, path in [
+            (collectible, self.cache_path),
+            (all_cards, self.all_cards_cache_path),
+        ]:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
 
     def _load_from_cache(self) -> None:
-        raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
         cards: dict[str, Card] = {}
-        for entry in raw:
-            cid = entry.get("id")
-            if not cid:
-                continue
-            cards[cid] = Card(
-                id=cid,
-                name=entry.get("name", cid),
-                text=clean_text(entry.get("text")),
-                cost=entry.get("cost", 0),
-                attack=entry.get("attack"),
-                health=entry.get("health"),
-                type=entry.get("type", ""),
-                card_class=entry.get("cardClass", ""),
-                mechanics=tuple(entry.get("mechanics", [])),
-                rarity=entry.get("rarity", ""),
-            )
+
+        def load_entries(raw: list, overwrite: bool) -> None:
+            for entry in raw:
+                cid = entry.get("id")
+                if not cid:
+                    continue
+                if cid in cards and not overwrite:
+                    continue  # 收集卡优先，不覆盖
+                cards[cid] = Card(
+                    id=cid,
+                    name=entry.get("name", cid),
+                    text=clean_text(entry.get("text")),
+                    cost=entry.get("cost", 0),
+                    attack=entry.get("attack"),
+                    health=entry.get("health"),
+                    type=entry.get("type", ""),
+                    card_class=entry.get("cardClass", ""),
+                    mechanics=tuple(entry.get("mechanics", [])),
+                    rarity=entry.get("rarity", ""),
+                )
+
+        # 先加载全卡（含教程卡等非收集卡），再用收集卡覆盖
+        if self.all_cards_cache_path.exists():
+            load_entries(json.loads(self.all_cards_cache_path.read_text(encoding="utf-8")), overwrite=True)
+        load_entries(json.loads(self.cache_path.read_text(encoding="utf-8")), overwrite=True)
         self._cards = cards
 
     def get(self, card_id: str) -> Card | None:
