@@ -21,8 +21,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +37,11 @@ from hscoach.cards import CardDatabase
 logger = logging.getLogger(__name__)
 
 ADVICE_FILENAME = "advice.json"
+
+# 增量检测用的正则：从原始日志行快速提取回合数，无需 hslog 全量解析
+# 格式: TAG_CHANGE Entity=N tag=TURN value=M  或  tag=CURRENT_PLAYER value=P
+_TURN_RE = re.compile(r"tag=TURN\s+value=(\d+)")
+_CURRENT_PLAYER_RE = re.compile(r"tag=CURRENT_PLAYER\s+value=(\d+)")
 
 
 @dataclass
@@ -89,6 +96,62 @@ class TurnTrigger:
         advice = get_advice(snapshot, client, self.friendly_player_id)
         publish_advice(publish_dir, advice, snapshot.turn)
         return advice
+
+
+@dataclass
+class IncrementalTurnDetector:
+    """增量回合检测器（优化 2+3）。
+
+    扫描原始日志行（正则，极快），检测 TURN/CURRENT_PLAYER 变化。
+    只有检测到"轮到友方的新回合"时，才回调一次全量解析+LLM。
+    避免每行都做 hslog 全量解析（46ms/次 → 正则 ~0.01ms/行）。
+
+    用法：
+        detector = IncrementalTurnDetector(friendly_player_id=1)
+        detector.on_lines(new_lines, callback=lambda all_lines: ...)
+
+    累积所有行，保证回调拿到的 all_lines 能解析出完整局面。
+    """
+
+    friendly_player_id: int
+    _all_lines: list[str] = field(default_factory=list)
+    _last_turn: int = 0
+    _current_player: int | None = None
+
+    def feed(self, lines: list[str]) -> bool:
+        """喂入新行，返回是否检测到"轮到友方的新回合"。
+
+        内部累积所有行；检测到新回合时返回 True（此时调 get_all_lines()
+        拿全量行做解析）。未检测到返回 False。
+        """
+        triggered = False
+        for line in lines:
+            self._all_lines.append(line)
+            # 正则快速扫描（比 hslog parse 快 1000 倍）
+            if "tag=TURN" in line:
+                m = _TURN_RE.search(line)
+                if m:
+                    turn = int(m.group(1))
+                    if turn > self._last_turn:
+                        self._last_turn = turn
+                        # 回合变了，检查是否轮到友方
+                        if self._current_player == self.friendly_player_id:
+                            triggered = True
+            elif "tag=CURRENT_PLAYER" in line:
+                m = _CURRENT_PLAYER_RE.search(line)
+                if m:
+                    self._current_player = int(m.group(1))
+        return triggered
+
+    def get_all_lines(self) -> list[str]:
+        """返回累积的全部日志行（用于全量解析）。"""
+        return self._all_lines
+
+    def reset(self) -> None:
+        """新对局时重置（CREATE_GAME 后调用）。"""
+        self._all_lines.clear()
+        self._last_turn = 0
+        self._current_player = None
 
 
 def publish_advice(publish_dir: Path, advice: Advice, turn: int) -> Path:

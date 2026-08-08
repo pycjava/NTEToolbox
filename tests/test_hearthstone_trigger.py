@@ -20,6 +20,7 @@ from hscoach.coach import Advice
 from hscoach.log_parser import parse_power_log
 from hscoach.state import GameSnapshot, serialize_game
 from hscoach.trigger import (
+    IncrementalTurnDetector,
     TurnTrigger,
     process_log_lines_for_trigger,
     publish_advice,
@@ -157,6 +158,82 @@ class ProcessLogLinesTest(unittest.TestCase):
             advices = process_log_lines_for_trigger(lines, trigger, None, client, publish_dir)
             # 是否触发取决于当前是否友方回合
             self.assertIsInstance(advices, list)
+
+
+class IncrementalTurnDetectorTest(unittest.TestCase):
+    """增量回合检测器测试（优化 2+3）。"""
+
+    # 模拟炉石日志行（简化格式，含 TURN/CURRENT_PLAYER 标记）
+    TURN_LINE = (
+        'D 00:00:01 GameState.DebugPrintPower() - TAG_CHANGE Entity=1 tag=TURN value={turn}'
+    )
+    PLAYER_LINE = (
+        'D 00:00:01 GameState.DebugPrintPower() - TAG_CHANGE Entity=1 tag=CURRENT_PLAYER value={player}'
+    )
+
+    def test_triggers_on_friendly_new_turn(self):
+        """回合递增 + 当前是友方 → 触发。"""
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        det.feed([self.PLAYER_LINE.format(player=1)])
+        det.feed([self.TURN_LINE.format(turn=1)])
+        self.assertFalse(det._last_turn == 0)  # turn 已记录
+        # 第2回合
+        triggered = det.feed([self.TURN_LINE.format(turn=2)])
+        # current_player 还是 1，turn 2>1 → 应触发
+        # 注意：CURRENT_PLAYER 可能不随每回合变（取决于日志），这里手动设了 player=1
+        self.assertTrue(triggered)
+
+    def test_no_trigger_on_same_turn(self):
+        """同一回合号不重复触发。"""
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        det.feed([self.PLAYER_LINE.format(player=1)])
+        det.feed([self.TURN_LINE.format(turn=5)])
+        # 再喂同样 turn=5
+        triggered = det.feed([self.TURN_LINE.format(turn=5)])
+        self.assertFalse(triggered)
+
+    def test_no_trigger_when_opponent_turn(self):
+        """对手回合（current_player != friendly）不触发。"""
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        det.feed([self.PLAYER_LINE.format(player=2)])  # 对手回合
+        triggered = det.feed([self.TURN_LINE.format(turn=3)])
+        self.assertFalse(triggered)
+
+    def test_accumulates_all_lines(self):
+        """get_all_lines 返回累积的全部行。"""
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        det.feed(["line1\n", "line2\n"])
+        det.feed(["line3\n"])
+        self.assertEqual(det.get_all_lines(), ["line1\n", "line2\n", "line3\n"])
+
+    def test_reset_clears_state(self):
+        """reset 后状态清零（新对局）。"""
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        det.feed([self.PLAYER_LINE.format(player=1), self.TURN_LINE.format(turn=5)])
+        det.reset()
+        self.assertEqual(det._last_turn, 0)
+        self.assertIsNone(det._current_player)
+        self.assertEqual(det.get_all_lines(), [])
+
+    def test_real_fixture_detects_turns(self):
+        """用真实 fixture 验证：至少检测到一次 turn 变化。"""
+        lines = []
+        with FIXTURE.open(encoding="utf-8") as fp:
+            for i, line in enumerate(fp):
+                if i >= 4000:
+                    break
+                lines.append(line)
+        det = IncrementalTurnDetector(friendly_player_id=1)
+        triggered_count = 0
+        # 分批喂入（模拟 tail 增量）
+        for i in range(0, len(lines), 50):
+            batch = lines[i : i + 50]
+            # 找 batch 里的 friendly player id（fixture 是 player 1 先手）
+            if det.feed(batch):
+                triggered_count += 1
+        # 真实日志应检测到至少一次 turn 变化（取决于 current_player 设定）
+        # 即使没触发（current_player 未设），_last_turn 应 > 0（解析到了 turn 标记）
+        self.assertGreater(det._last_turn, 0)
 
 
 if __name__ == "__main__":

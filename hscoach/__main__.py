@@ -20,7 +20,11 @@ from hscoach.log_config import ensure_log_config, power_log_path, tail_power_log
 from hscoach.log_parser import parse_power_log, parse_power_log_file
 from hscoach.overlay import OverlayApp
 from hscoach.state import serialize_game
-from hscoach.trigger import TurnTrigger, publish_advice
+from hscoach.trigger import (
+    IncrementalTurnDetector,
+    TurnTrigger,
+    publish_advice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,27 +71,42 @@ def main(argv: list[str] | None = None) -> int:
 
     power_log = power_log_path()
     trigger = TurnTrigger(friendly_player_id=args.friendly_player_id)
+    detector = IncrementalTurnDetector(friendly_player_id=args.friendly_player_id)
 
-    # 5. 后台线程：tail Power.log → 解析 → 触发建议
+    # 5. 后台线程：增量 tail → 正则检测回合 → 全量解析 → LLM（优化 2+3）
     stop_event = threading.Event()
 
     def log_worker():
         logger.info("开始监听 %s（打开炉石打一局即开始）...", power_log)
-        line_buffer: list[str] = []
-        for line in tail_power_log(poll_interval=0.5):
+        batch: list[str] = []
+        for line in tail_power_log(poll_interval=0.3):
             if stop_event.is_set():
                 break
-            line_buffer.append(line)
-            if "CREATE_GAME" in line or len(line_buffer) >= 2000:
-                try:
-                    result = parse_power_log(line_buffer)
-                    for game in result.games:
-                        advice = trigger.check_and_trigger(game, db, client, publish_dir)
-                        if advice is not None:
-                            logger.info("回合建议已发布：%s", advice.headline)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("处理日志出错：%s", e)
-                line_buffer.clear()
+            batch.append(line)
+            # CREATE_GAME 边界：重置检测器（新对局）
+            if "CREATE_GAME" in line:
+                detector.reset()
+            # 每攒一批（或遇到回合结束标记）检测一次
+            if len(batch) >= 50 or "TAG_CHANGE" in line:
+                triggered = detector.feed(batch)
+                batch.clear()
+                if triggered:
+                    # 检测到"轮到友方新回合" → 全量解析 → LLM（回合开始即触发）
+                    try:
+                        result = parse_power_log(detector.get_all_lines())
+                        if result.games:
+                            game = result.games[-1]
+                            advice = trigger.check_and_trigger(
+                                game, db, client, publish_dir
+                            )
+                            if advice is not None:
+                                logger.info(
+                                    "回合建议已发布（T%d）：%s",
+                                    trigger.last_triggered_turn,
+                                    advice.headline,
+                                )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("处理日志出错：%s", e)
 
     worker = threading.Thread(target=log_worker, daemon=True)
     worker.start()
