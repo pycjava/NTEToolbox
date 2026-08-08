@@ -15,6 +15,9 @@ PlayerOne/PlayerTwo 或数字实体 id 两种形态）。每当 TURN tag 递增�
       "advice": { ... Advice.to_dict() ... }
     }
 原子写：先写临时文件再 os.replace，读者永不看到半写状态。
+
+盒子数据源（game_state.json）：与 advice.json 同契约的实时对局快照
+（turn/current_player_id/friendly_player_id/players），已过 D9 过滤。
 """
 
 from __future__ import annotations
@@ -28,7 +31,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from hearthstone.enums import GameTag
 from hscoach.coach import Advice, LLMClient, get_advice
 from hscoach.state import GameSnapshot, serialize_game
 from hscoach.cards import CardDatabase
@@ -36,6 +38,7 @@ from hscoach.cards import CardDatabase
 logger = logging.getLogger(__name__)
 
 ADVICE_FILENAME = "advice.json"
+GAME_STATE_FILENAME = "game_state.json"  # 盒子（记牌器）数据源，实时对局快照
 
 # 增量检测用的正则：从原始日志行快速提取回合信息，无需 hslog 全量解析
 # 回合数写在 GameEntity 上：TAG_CHANGE Entity=GameEntity tag=TURN value=N
@@ -245,6 +248,38 @@ def publish_advice(publish_dir: Path, advice: Advice, turn: int) -> Path:
         os.replace(tmp_path, target)
     except Exception:
         # 清理临时文件
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def publish_game_state(publish_dir: Path, snapshot: GameSnapshot, friendly_player_id: int) -> Path:
+    """原子写 game_state.json：实时对局快照（盒子/记牌器数据源）。
+
+    与 advice.json 同一契约精神：语言无关、文件式、原子写（tmp +
+    os.replace），三期 C# WPF 可零成本复用。快照已经过 serialize_game
+    的 D9 过滤（对手手牌只有数量），UI 直接消费即可，无需再过滤。
+    """
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    target = publish_dir / GAME_STATE_FILENAME
+    payload = {
+        "turn": snapshot.turn,
+        "current_player_id": snapshot.current_player_id,
+        "friendly_player_id": friendly_player_id,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "players": {pid: pv.to_dict() for pid, pv in snapshot.players.items()},
+    }
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(publish_dir), prefix=".state_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, target)
+    except Exception:
         try:
             os.unlink(tmp_path)
         except OSError:

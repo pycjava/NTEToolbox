@@ -1,7 +1,9 @@
-"""T8(08) 最简置顶窗 UI（一期 overlay）。
+"""T8(08) 最简置顶窗 UI（一期 overlay）——盒子 + 教练建议。
 
 用 tkinter（Python 标准库）实现两个常驻置顶窗口：
-- 建议窗：只显示建议内容，默认点击穿透（不挡游戏操作），可切换
+- 建议窗（盒子）：顶部是记牌器盒子——实时对局信息（回合/双方血量/
+  法力/手牌数/牌库剩余，来自 game_state.json，已 D9 过滤）；下方是
+  AI 建议内容。默认点击穿透（不挡游戏操作），可切换
 - 控制窗：独立小窗，永不穿透——退出/再想想/穿透切换/还原日志配置
   按钮都在这。修复了"整窗 WS_EX_TRANSPARENT 导致退出按钮不可达"的 bug：
   穿透只作用于建议窗，控制窗永远可点（永不穿透的退出按钮）。
@@ -49,8 +51,45 @@ def parse_display_fields(data: dict) -> dict:
     }
 
 
+def parse_tracker_fields(data: dict) -> dict:
+    """把 game_state.json 解析成盒子显示字段（纯函数，可测试）。
+
+    game_state.json 已过 D9 过滤（对手手牌只有数量），这里直接展示：
+    回合、当前玩家、双方血量/护甲/法力/手牌数/牌库剩余。仿炉石盒子
+    的记牌器小盒子——只显示合法可见信息。
+    """
+    turn = data.get("turn", "?")
+    current_player_id = data.get("current_player_id")
+    friendly_player_id = data.get("friendly_player_id")
+    players = data.get("players", {})
+    lines = []
+    for pid in sorted(players, key=int):
+        pv = players[pid]
+        is_friendly = friendly_player_id is not None and int(pid) == friendly_player_id
+        tag = "我方" if is_friendly else "对手"
+        hand = pv.get("hand", {})
+        if isinstance(hand, dict):
+            hand_text = f"✋{hand.get('count', '?')}"
+        else:
+            hand_text = f"✋{len(hand)}"
+        lines.append(
+            f"{tag} ❤{pv.get('health', '?')} 🛡{pv.get('armor', 0)}"
+            f" ⚡{pv.get('mana', '?')}/{pv.get('max_mana', '?')}"
+            f" {hand_text} 📚{pv.get('deck_count', '?')}"
+        )
+    current_text = ""
+    if current_player_id is not None and friendly_player_id is not None:
+        who = "我方" if current_player_id == friendly_player_id else "对手"
+        current_text = f"· {who}回合"
+    return {"title": f"T{turn} {current_text}".strip(), "lines": lines}
+
+
 class OverlayApp:
     """置顶建议窗 + 独立控制窗。非阻塞启动；文件变化时刷新内容。
+
+    建议窗顶部是"盒子"（记牌器）：实时对局信息（回合/双方血量/法力/
+    手牌数/牌库剩余，来自 game_state.json，已 D9 过滤）；下方是 AI
+    建议。两者都监听文件自动刷新。
 
     on_save_settings：设置对话框保存回调（入参 CoachConfig，返回状态
     提示文本），由入口负责写配置 + 热切换 LLM 客户端。
@@ -60,28 +99,48 @@ class OverlayApp:
     def __init__(
         self,
         advice_path: Path,
+        state_path: Path | None = None,
         on_manual_trigger=None,
         on_restore_log_config=None,
         on_save_settings=None,
         config=None,
     ):
         self.advice_path = advice_path
+        self.state_path = state_path or advice_path.parent / "game_state.json"
         self.on_manual_trigger = on_manual_trigger
         self.on_restore_log_config = on_restore_log_config
         self.on_save_settings = on_save_settings
         self.config = config
         self._click_through = True
         self._last_mtime: float = 0
+        self._last_state_mtime: float = 0
         self._mode_btn = None  # 穿透切换按钮（控制窗里，run() 时创建）
 
     def run(self) -> None:
         import tkinter as tk
 
         self.root = tk.Tk()
-        self.root.title("炉石教练")
-        self.root.geometry("360x260+50+50")
+        self.root.title("炉石盒子·AI 教练")
+        self.root.geometry("360x330+50+50")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e2e")
+
+        # 盒子：实时对局信息（记牌器）
+        self.tracker_var = tk.StringVar(value="等待对局开始…")
+        tracker_lbl = tk.Label(
+            self.root,
+            textvariable=self.tracker_var,
+            fg="#f9e2af",
+            bg="#1e1e2e",
+            wraplength=340,
+            font=("Consolas", 9),
+            justify="left",
+            anchor="w",
+        )
+        tracker_lbl.pack(pady=(6, 2), padx=8, fill="x")
+
+        # 分隔线
+        tk.Frame(self.root, bg="#45475a", height=1).pack(fill="x", padx=8)
 
         # 诚实标注
         title = tk.Label(
@@ -91,7 +150,7 @@ class OverlayApp:
             bg="#1e1e2e",
             font=("Microsoft YaHei", 9, "bold"),
         )
-        title.pack(pady=(6, 2))
+        title.pack(pady=(4, 2))
 
         # 建议内容区
         self.headline_var = tk.StringVar(value="等待对局开始…")
@@ -316,13 +375,21 @@ class OverlayApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def _poll_file(self) -> None:
-        """轮询 advice.json 的 mtime，变化时刷新显示。"""
+        """轮询 advice.json / game_state.json 的 mtime，变化时刷新显示。"""
         try:
             if self.advice_path.exists():
                 mtime = self.advice_path.stat().st_mtime
                 if mtime != self._last_mtime:
                     self._last_mtime = mtime
                     self._load_and_display()
+        except OSError:
+            pass
+        try:
+            if self.state_path.exists():
+                mtime = self.state_path.stat().st_mtime
+                if mtime != self._last_state_mtime:
+                    self._last_state_mtime = mtime
+                    self._load_and_display_state()
         except OSError:
             pass
         self.root.after(POLL_INTERVAL_MS, self._poll_file)
@@ -337,6 +404,19 @@ class OverlayApp:
         self.why_var.set(fields["why"])
         self.steps_var.set(fields["steps"])
 
+    def _load_and_display_state(self) -> None:
+        """刷新盒子（记牌器）面板。"""
+        try:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+        fields = parse_tracker_fields(data)
+        text = fields["title"]
+        if fields["lines"]:
+            text += "\n" + "\n".join(fields["lines"])
+        self.tracker_var.set(text)
+
     def refresh_now(self) -> None:
         """供外部调用的立即刷新。"""
         self._load_and_display()
+        self._load_and_display_state()

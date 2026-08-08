@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from hscoach.cards import CardDatabase
@@ -20,10 +20,11 @@ from hscoach.config import effective_config, save_config
 from hscoach.log_config import ensure_log_config, power_log_path, tail_power_log
 from hscoach.log_parser import parse_power_log, parse_power_log_file
 from hscoach.overlay import OverlayApp
-from hscoach.state import detect_friendly_player_id
+from hscoach.state import detect_friendly_player_id, serialize_game
 from hscoach.trigger import (
     IncrementalTurnDetector,
     TurnTrigger,
+    publish_game_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     def log_worker():
         logger.info("开始监听 %s（打开炉石打一局即开始）...", power_log)
         batch: list[str] = []
+        last_state_ts = 0.0  # 盒子快照节流（1s 一次，不阻塞回合触发）
         for line in tail_power_log(poll_interval=0.3):
             if stop_event.is_set():
                 break
@@ -204,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
             # CREATE_GAME 边界：重置检测器（新对局）
             if "CREATE_GAME" in line:
                 detector.reset()
+                last_state_ts = 0.0  # 新对局立即发一版空快照
             # 每攒一批（或遇到 TAG_CHANGE）检测一次
             if len(batch) >= 50 or "TAG_CHANGE" in line:
                 triggered_turns = detector.feed(batch)
@@ -227,6 +230,22 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                     except Exception as e:  # 处理日志出错不致命
                         logger.warning("处理日志出错：%s", e)
+                # 盒子：节流发布实时对局快照（血量/手牌/牌库变化即时上屏）
+                now = time.monotonic()
+                if now - last_state_ts >= 1.0:
+                    last_state_ts = now
+                    try:
+                        result = parse_power_log(detector.get_all_lines())
+                        apply_calibration(result)
+                        if result.games:
+                            snapshot = serialize_game(
+                                result.games[-1], trigger.friendly_player_id, db
+                            )
+                            publish_game_state(
+                                publish_dir, snapshot, trigger.friendly_player_id
+                            )
+                    except Exception as e:  # 快照发布失败不致命（如 D9 断言前）
+                        logger.debug("快照发布失败（非致命）：%s", e)
 
     worker = threading.Thread(target=log_worker, daemon=True)
     worker.start()
@@ -251,6 +270,12 @@ def main(argv: list[str] | None = None) -> int:
                     apply_calibration(result)
                     if result.games:
                         game = result.games[-1]
+                        # 盒子同步刷新：手动触发也发布一版最新快照
+                        publish_game_state(
+                            publish_dir,
+                            serialize_game(game, trigger.friendly_player_id, db),
+                            trigger.friendly_player_id,
+                        )
                         advice = trigger.manual_trigger(game, db, client_holder, publish_dir)
                         logger.info("手动建议：%s", advice.headline)
                 except Exception as e:  # 手动触发出错不致命

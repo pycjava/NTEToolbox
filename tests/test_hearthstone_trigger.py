@@ -24,11 +24,13 @@ from hscoach.coach import Advice
 from hscoach.log_parser import parse_power_log
 from hscoach.state import serialize_game
 from hscoach.trigger import (
+    GAME_STATE_FILENAME,
     IncrementalTurnDetector,
     TurnTrigger,
     publish_advice,
+    publish_game_state,
 )
-from tests._helpers import FIXTURE, read_fixture_lines
+from tests._helpers import read_fixture_lines
 
 # 真实 fixture 的行语义（已逐行核对）：
 #   turn 1  = line 3188，当前 PlayerTwo（玩家2，Entity=3 数字形态）
@@ -126,6 +128,66 @@ class PublishAdviceTest(unittest.TestCase):
             d = Path(td)
             publish_advice(d, Advice(kind="pass", headline="结束"), turn=1)
             self.assertEqual(list(d.glob(".advice_*.tmp")), [])
+
+
+class PublishGameStateTest(unittest.TestCase):
+    """盒子数据源 game_state.json：原子写 + D9 过滤（对手手牌只有数量）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = parse_power_log(read_fixture_lines())  # 完整 fixture
+
+    def _publish(self, friendly_player_id=1):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        game = self.result.games[-1]
+        snapshot = serialize_game(game, friendly_player_id, db=None)
+        path = publish_game_state(d, snapshot, friendly_player_id)
+        self.addCleanup(self._tmp.cleanup)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return d, path, data
+
+    def test_atomic_write_and_fields(self):
+        d, path, data = self._publish()
+        self.assertEqual(path.name, GAME_STATE_FILENAME)
+        self.assertIn("turn", data)
+        self.assertIn("current_player_id", data)
+        self.assertIn("friendly_player_id", data)
+        self.assertIn("timestamp", data)
+        self.assertEqual(len(data["players"]), 2)
+        # 无残留临时文件
+        self.assertEqual(list(d.glob(".state_*.tmp")), [])
+
+    def test_opponent_hand_is_count_only(self):
+        """D9：game_state.json 里对手手牌只有数量，绝无 card_id。"""
+        _, _, data = self._publish(friendly_player_id=1)
+        for pid, pv in data["players"].items():
+            if int(pid) == data["friendly_player_id"]:
+                self.assertIsInstance(pv["hand"], list)  # 我方手牌是明细
+            else:
+                # 对手手牌只有 {"count": N}
+                self.assertIsInstance(pv["hand"], dict)
+                self.assertEqual(set(pv["hand"]), {"count"})
+
+    def test_snapshot_matches_serialize(self):
+        """发布内容与 serialize_game 输出一致（单一来源，无二次加工）。"""
+        game = self.result.games[-1]
+        snapshot = serialize_game(game, 1, db=None)
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            path = publish_game_state(Path(td), snapshot, 1)
+            data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["turn"], snapshot.turn)
+        self.assertEqual(data["current_player_id"], snapshot.current_player_id)
+        self.assertEqual(data["friendly_player_id"], 1)
+        for pid in snapshot.players:
+            self.assertEqual(
+                data["players"][str(pid)],
+                snapshot.players[pid].to_dict(),
+            )
 
 
 class TriggerFallbackTest(unittest.TestCase):
