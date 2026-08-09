@@ -1,5 +1,6 @@
 import ast
 import importlib.util
+import inspect
 import json
 import sys
 import tomllib
@@ -55,6 +56,8 @@ class AgentPackagingTest(unittest.TestCase):
             tauri_config["bundle"]["resources"],
             {
                 "gen/maafw/": "maafw/",
+                "gen/hscoach/": "hscoach/",
+                "gen/WebView2Loader.dll": "./",
             },
         )
 
@@ -83,10 +86,13 @@ class AgentPackagingTest(unittest.TestCase):
 
         self.assertIn('Join-Path $repoRoot "dist\\agent.exe"', script)
         self.assertIn(
-            'Invoke-Step "python" @("-m", "pip", "install", "-e", ".", "pyinstaller")',
+            'Invoke-Step $pythonCommand ($pythonArguments + @("-m", "pip", "install", "-e", ".", "pyinstaller"))',
             script,
         )
-        self.assertIn('Invoke-Step "python" @(".\\tools\\build_agent.py")', script)
+        self.assertIn(
+            'Invoke-Step $pythonCommand ($pythonArguments + @(".\\tools\\build_agent.py"))',
+            script,
+        )
 
     def test_tauri_build_script_cleans_dist_after_collecting_artifacts(self):
         script = (ROOT / "tools" / "build_tauri.ps1").read_text(encoding="utf-8")
@@ -104,6 +110,63 @@ class AgentPackagingTest(unittest.TestCase):
             "Remove-Item -LiteralPath $agentDistDir -Recurse -Force",
             script[cleanup_index:complete_index],
         )
+
+    def test_build_hscoachd_uses_headless_entry_and_bundles_card_database(self):
+        build_hscoachd = load_tool_module(
+            "build_hscoachd", ROOT / "tools" / "build_hscoachd.py"
+        )
+
+        args = build_hscoachd.build_pyinstaller_args(ROOT)
+
+        self.assertIn("--onedir", args)
+        self.assertIn("--name=hscoachd", args)
+        self.assertIn(f"--paths={ROOT}", args)
+        self.assertIn("--collect-submodules=hslog", args)
+        self.assertIn(str(ROOT / "tools" / "hscoachd_entry.py"), args)
+        # 与独立版共用逻辑入口（headless 由 --no-overlay 控制）
+        entry = (ROOT / "tools" / "hscoachd_entry.py").read_text(encoding="utf-8")
+        self.assertIn("from hscoach.__main__ import main", entry)
+
+        # 卡库打包逻辑：frozen 模式从 exe 旁 data/ 读取
+        source = inspect.getsource(build_hscoachd.bundle_card_database)
+        self.assertIn('"cards.*.json"', source)
+        self.assertIn('"data"', source)
+
+    def test_build_headless_assembles_bundle_without_gui(self):
+        build_headless = load_tool_module(
+            "build_headless", ROOT / "tools" / "build_headless.py"
+        )
+
+        source = inspect.getsource(build_headless.main)
+        # Maa 运行时 + 资源 + agent 源码目录兜底
+        self.assertIn("deps", source)
+        self.assertIn("assets", source)
+        self.assertIn("agent", source)
+        # 非 Windows 平台用 python -m agent，Windows 用打包 exe
+        self.assertIn('"child_exec": "python"', source)
+        self.assertIn('"child_exec": "./agent.exe"', source)
+
+    def test_build_tauri_script_builds_hscoachd_backend(self):
+        script = (ROOT / "tools" / "build_tauri.ps1").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'Invoke-Step $pythonCommand ($pythonArguments + @(".\\tools\\build_hscoachd.py"))',
+            script,
+        )
+        self.assertIn(
+            'Join-Path $repoRoot "dist\\hscoachd\\hscoachd.exe"',
+            script,
+        )
+
+    def test_prepare_maafw_bundles_hscoachd_runtime(self):
+        script = (ROOT / "client" / "scripts" / "prepare-maafw.mjs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("dist", script)
+        self.assertIn("hscoachd", script)
+        self.assertIn('gen"', script)
+        self.assertIn("hscoach", script)
 
     def test_source_interface_uses_python_agent_for_development(self):
         interface = json.loads(

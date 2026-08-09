@@ -78,13 +78,22 @@ describe("client data adapter", () => {
   it("builds games, controllers, and options from interface config", () => {
     const data = buildClientDataFromInterface(interfaceConfig);
 
-    expect(data.initialGames).toHaveLength(1);
+    expect(data.initialGames).toHaveLength(2);
     expect(data.initialGames[0]).toMatchObject({
       id: "nte",
       name: "NTEToolbox",
       description: "异环工具箱",
       shortName: "异",
-      status: "ready"
+      status: "ready",
+      kind: "maa"
+    });
+    // 炉石模块：process 驱动的第二游戏
+    expect(data.initialGames[1]).toMatchObject({
+      id: "hs",
+      name: "炉石传说",
+      shortName: "炉",
+      status: "ready",
+      kind: "process"
     });
     expect(data.initialGames[0].controller?.controllerTypes).toEqual([
       "Win PostMessage (默认)",

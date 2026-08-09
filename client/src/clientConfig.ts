@@ -21,7 +21,7 @@ export type PersistedClientConfig = {
   };
   /** 上次打开的游戏 id */
   lastOpenedGameId?: string;
-  /** 管理员权限提示开关——仅持久化，行为待接入 */
+  /** 管理员权限提示开关：未提权运行时提示一次 */
   adminPromptEnabled?: boolean;
   games: Record<string, {
     controller?: {

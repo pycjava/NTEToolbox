@@ -65,6 +65,25 @@ const GLOBAL_SETTINGS_TASK_NAME = "全局设置";
 const DEFAULT_GAME_ID = "nte";
 const DEFAULT_GAME_SHORT_NAME = "异";
 const DEFAULT_GAME_ICON = "/nte-icon.png";
+const HS_GAME_ID = "hs";
+
+/** 炉石传说：独立后端进程（hscoachd）驱动，不走 MaaPiCli 任务系统。 */
+const HS_GAME: GameDefinition = {
+  id: HS_GAME_ID,
+  name: "炉石传说",
+  description: "AI 教练：实时对局解析与出牌建议",
+  shortName: "炉",
+  status: "ready",
+  kind: "process",
+  features: [],
+  controller: {
+    controllerType: "",
+    controllerTypes: [],
+    targetWindow: "",
+    availableWindows: [],
+    connected: false
+  }
+};
 
 const defaultGlobalSettingsOption: InputOptionDefinition = {
   key: GLOBAL_SETTINGS_TASK_NAME,
@@ -130,6 +149,7 @@ export function buildClientDataFromInterface(config: MaaInterfaceConfig): Client
     shortName: DEFAULT_GAME_SHORT_NAME,
     icon: DEFAULT_GAME_ICON,
     status: "ready",
+    kind: "maa",
     controller: {
       controllerType: defaultControllerName,
       controllerTypes: controllerNames,
@@ -144,7 +164,7 @@ export function buildClientDataFromInterface(config: MaaInterfaceConfig): Client
     globalSettingsOption,
     globalSettingsDefaultValues,
     nteOptions: optionDefinitions,
-    initialGames: [game]
+    initialGames: [game, HS_GAME]
   };
 }
 

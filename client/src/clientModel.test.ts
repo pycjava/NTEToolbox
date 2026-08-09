@@ -131,6 +131,7 @@ const games: GameDefinition[] = [
     name: "异环 NTE",
     shortName: "异",
     status: "ready",
+    kind: "maa",
     features: [
       {
         id: "fish",
@@ -189,7 +190,8 @@ const games: GameDefinition[] = [
     id: "future",
     name: "预留游戏",
     shortName: "预",
-    status: "placeholder",
+    status: "ready",
+    kind: "maa",
     features: []
   }
 ];
@@ -248,7 +250,8 @@ describe("client model", () => {
       id: "new-game",
       name: "新游戏",
       shortName: "新",
-      status: "placeholder",
+      status: "ready",
+      kind: "maa",
       features: []
     });
 

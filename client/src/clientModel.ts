@@ -1,4 +1,6 @@
-export type GameStatus = "ready" | "placeholder";
+export type GameStatus = "ready";
+/** 游戏的驱动方式：maa=走 MaaPiCli 任务（异环）；process=独立后端进程（炉石 hscoachd） */
+export type GameKind = "maa" | "process";
 export type RunState = "idle" | "starting" | "running" | "stopping" | "completed" | "failed";
 export type OptionValue = boolean | string;
 export type PipelineOverride = Record<string, unknown>;
@@ -90,6 +92,8 @@ export type GameDefinition = {
   shortName: string;
   icon?: string;
   status: GameStatus;
+  /** 驱动方式：maa（MaaPiCli 任务）或 process（独立后端进程） */
+  kind: GameKind;
   features: FeatureDefinition[];
   controller?: ControllerState;
 };
@@ -102,7 +106,7 @@ export type ClientState = {
   theme: ThemeMode;
   /** 上次打开的游戏 id，用于启动时恢复选中（connected 仍需重选窗口） */
   lastOpenedGameId?: string;
-  /** 管理员权限提示开关——仅持久化，行为待 Rust 配合接入（TODO） */
+  /** 管理员权限提示开关：未提权运行时提示一次 */
   adminPromptEnabled: boolean;
 };
 

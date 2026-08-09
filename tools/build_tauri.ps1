@@ -344,6 +344,14 @@ if (-not (Test-Path -LiteralPath $agentDistExe -PathType Leaf)) {
     throw "agent.exe was not built: $agentDistExe"
 }
 
+# 4b. Build hscoachd (炉石教练 headless 后端，随客户端分发)
+Write-Host "       Building hscoachd (hs coach backend) ..." -ForegroundColor Cyan
+Invoke-Step $pythonCommand ($pythonArguments + @(".\tools\build_hscoachd.py"))
+$hscoachdDistExe = Join-Path $repoRoot "dist\hscoachd\hscoachd.exe"
+if (-not (Test-Path -LiteralPath $hscoachdDistExe -PathType Leaf)) {
+    throw "hscoachd.exe was not built: $hscoachdDistExe"
+}
+
 # ---------------------------------------------------------------------------
 # 5. Build Tauri app (split: pre-copy DLL → compile → inject DLL → bundle NSIS)
 # ---------------------------------------------------------------------------
@@ -436,11 +444,11 @@ if (-not (Test-Path $releaseDir)) {
 }
 
 # Copy exe (Tauri v2 uses the Cargo package name as the binary name)
-$exePath = Join-Path $releaseDir "ntttoolbox-client.exe"
+$exePath = Join-Path $releaseDir "ntetoolbox-client.exe"
 if (Test-Path $exePath) {
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    Copy-Item -Force $exePath (Join-Path $OutputDir "MaaToolbox Client.exe")
-    Write-Host "       EXE -> $OutputDir\MaaToolbox Client.exe"
+    Copy-Item -Force $exePath (Join-Path $OutputDir "NTEToolbox.exe")
+    Write-Host "       EXE -> $OutputDir\NTEToolbox.exe"
 }
 
 # Copy WebView2Loader.dll (required next to exe for GNU toolchain builds)

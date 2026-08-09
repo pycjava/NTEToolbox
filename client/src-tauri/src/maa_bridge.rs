@@ -1,8 +1,7 @@
 use crate::debug_log::resolve_debug_log_dir;
+use crate::process_tree::{self, ManagedProcess, WindowsJob};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-#[cfg(windows)]
-use std::ffi::c_void;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 #[cfg(windows)]
@@ -10,26 +9,17 @@ use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
-#[cfg(windows)]
-use std::{mem, os::windows::io::AsRawHandle, ptr};
 use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-#[cfg(windows)]
-const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x00002000;
-#[cfg(windows)]
-const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
-#[cfg(windows)]
-const MAA_PROCESS_STOP_EXIT_CODE: u32 = 1;
 const MAA_PROCESS_WAIT_POLL_MS: u64 = 50;
-const MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS: u64 = 1_500;
 const MAA_PROCESS_FORCE_STOP_TIMEOUT_MS: u64 = 3_000;
 const FISH_SCREENSHOT_ROOT_ENV: &str = "NTE_TOOLBOX_INSTALL_ROOT";
 
@@ -164,7 +154,9 @@ impl MaaChildProcess {
     }
 
     fn stop(&mut self, reason: &str) -> Result<(), String> {
-        stop_maa_process_tree(self, reason)
+        // 取出 job（结束语义下不再需要恢复：失败时 Drop 触发 KILL_ON_JOB_CLOSE）
+        let job = self.job.take();
+        process_tree::stop_process_tree(self, job.as_ref(), "MaaPiCli", reason)
     }
 
     fn poll_exit(&mut self) -> Result<Option<ExitStatus>, String> {
@@ -205,6 +197,26 @@ impl MaaChildProcess {
     }
 }
 
+impl ManagedProcess for MaaChildProcess {
+    fn pid(&self) -> u32 {
+        self.pid()
+    }
+
+    fn poll_exit(&mut self) -> Result<Option<ExitStatus>, String> {
+        self.poll_exit()
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Result<bool, String> {
+        self.wait_for_exit(timeout)
+    }
+
+    fn kill_parent(&mut self) -> Result<(), String> {
+        self.child
+            .kill()
+            .map_err(|error| format!("Failed to kill MaaPiCli process: {error}"))
+    }
+}
+
 #[derive(Default)]
 pub struct MaaBridgeRuntime {
     children: HashMap<String, MaaChildProcess>,
@@ -224,17 +236,6 @@ impl MaaBridgeRuntime {
         let debug_log_dir = resolve_bridge_debug_log_dir(app)?;
         prepare_runtime_debug_dir(&runtime_root, &debug_log_dir)?;
         migrate_legacy_bridge_log_dir(&runtime_root, &debug_log_dir)?;
-
-        // Debug: dump the raw option_definitions received from the frontend
-        {
-            let _ = fs::create_dir_all(&debug_log_dir);
-            let defs_json = serde_json::to_string_pretty(&request.option_definitions)
-                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
-            let _ = fs::write(
-                debug_log_dir.join("debug_option_definitions.json"),
-                defs_json,
-            );
-        }
 
         write_maa_pi_config(&runtime_root, request)?;
 
@@ -447,250 +448,6 @@ impl Drop for MaaBridgeRuntime {
     }
 }
 
-#[cfg(windows)]
-type WindowsHandle = isize;
-
-#[cfg(windows)]
-#[repr(C)]
-struct JobObjectBasicLimitInformation {
-    per_process_user_time_limit: i64,
-    per_job_user_time_limit: i64,
-    limit_flags: u32,
-    minimum_working_set_size: usize,
-    maximum_working_set_size: usize,
-    active_process_limit: u32,
-    affinity: usize,
-    priority_class: u32,
-    scheduling_class: u32,
-}
-
-#[cfg(windows)]
-#[repr(C)]
-struct IoCounters {
-    read_operation_count: u64,
-    write_operation_count: u64,
-    other_operation_count: u64,
-    read_transfer_count: u64,
-    write_transfer_count: u64,
-    other_transfer_count: u64,
-}
-
-#[cfg(windows)]
-#[repr(C)]
-struct JobObjectExtendedLimitInformation {
-    basic_limit_information: JobObjectBasicLimitInformation,
-    io_info: IoCounters,
-    process_memory_limit: usize,
-    job_memory_limit: usize,
-    peak_process_memory_used: usize,
-    peak_job_memory_used: usize,
-}
-
-#[cfg(windows)]
-#[link(name = "kernel32")]
-extern "system" {
-    fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> WindowsHandle;
-    fn SetInformationJobObject(
-        job: WindowsHandle,
-        info_class: i32,
-        info: *mut c_void,
-        info_length: u32,
-    ) -> i32;
-    fn AssignProcessToJobObject(job: WindowsHandle, process: WindowsHandle) -> i32;
-    fn TerminateJobObject(job: WindowsHandle, exit_code: u32) -> i32;
-    fn CloseHandle(handle: WindowsHandle) -> i32;
-}
-
-#[cfg(windows)]
-struct WindowsJob {
-    handle: WindowsHandle,
-}
-
-#[cfg(windows)]
-impl WindowsJob {
-    fn assign_child(child: &Child) -> Result<Self, String> {
-        let handle = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
-        if handle == 0 {
-            return Err(format!(
-                "CreateJobObjectW failed: {}",
-                io::Error::last_os_error()
-            ));
-        }
-
-        let job = Self { handle };
-        if let Err(error) = job.set_kill_on_close() {
-            drop(job);
-            return Err(error);
-        }
-
-        let process_handle = child.as_raw_handle() as WindowsHandle;
-        if unsafe { AssignProcessToJobObject(job.handle, process_handle) } == 0 {
-            let error = io::Error::last_os_error();
-            drop(job);
-            return Err(format!("AssignProcessToJobObject failed: {error}"));
-        }
-
-        Ok(job)
-    }
-
-    fn set_kill_on_close(&self) -> Result<(), String> {
-        let mut info: JobObjectExtendedLimitInformation = unsafe { mem::zeroed() };
-        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-
-        let ok = unsafe {
-            SetInformationJobObject(
-                self.handle,
-                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
-                &mut info as *mut _ as *mut c_void,
-                mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
-            )
-        };
-        if ok == 0 {
-            Err(format!(
-                "SetInformationJobObject failed: {}",
-                io::Error::last_os_error()
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn terminate(&self) -> Result<(), String> {
-        let ok = unsafe { TerminateJobObject(self.handle, MAA_PROCESS_STOP_EXIT_CODE) };
-        if ok == 0 {
-            Err(format!(
-                "TerminateJobObject failed: {}",
-                io::Error::last_os_error()
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for WindowsJob {
-    fn drop(&mut self) {
-        if unsafe { CloseHandle(self.handle) } == 0 {
-            log::warn!(
-                "Failed to close Maa Windows job object: {}",
-                io::Error::last_os_error()
-            );
-        }
-    }
-}
-
-#[cfg(windows)]
-fn stop_maa_process_tree(process: &mut MaaChildProcess, reason: &str) -> Result<(), String> {
-    let pid = process.child.id();
-    if process.poll_exit()?.is_some() {
-        log::info!("MaaPiCli already exited before stop: pid={pid}, reason={reason}");
-        return Ok(());
-    }
-
-    let mut errors = Vec::new();
-    let job_terminate_result = process.job.as_ref().map(WindowsJob::terminate);
-    if let Some(result) = job_terminate_result {
-        match result {
-            Ok(()) => {
-                log::info!(
-                    "TerminateJobObject sent to MaaPiCli process tree: pid={pid}, reason={reason}, stop_exit_code={MAA_PROCESS_STOP_EXIT_CODE}"
-                );
-                if process
-                    .wait_for_exit(Duration::from_millis(MAA_PROCESS_GRACEFUL_STOP_TIMEOUT_MS))?
-                {
-                    return Ok(());
-                }
-                errors.push("Timed out waiting for MaaPiCli after TerminateJobObject".to_string());
-            }
-            Err(error) => errors.push(error),
-        }
-    }
-
-    if process.poll_exit()?.is_some() {
-        return Ok(());
-    }
-
-    match kill_windows_process_tree(pid) {
-        Ok(()) => {
-            log::info!("taskkill sent to MaaPiCli process tree: pid={pid}, reason={reason}");
-            if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
-                return Ok(());
-            }
-            errors.push("Timed out waiting for MaaPiCli after taskkill".to_string());
-        }
-        Err(error) => {
-            if process.poll_exit()?.is_some() {
-                return Ok(());
-            }
-            errors.push(error);
-        }
-    }
-
-    if process.poll_exit()?.is_some() {
-        return Ok(());
-    }
-
-    process.child.kill().map_err(|kill_error| {
-        format!(
-            "Failed to stop MaaPiCli process tree: {}; fallback parent kill failed: {kill_error}",
-            errors.join("; ")
-        )
-    })?;
-    log::warn!("Fallback parent kill sent to MaaPiCli: pid={pid}, reason={reason}");
-
-    if process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
-        errors.push("stopped only the parent process".to_string());
-    } else {
-        errors.push("fallback parent kill did not exit".to_string());
-    }
-
-    Err(format!(
-        "Failed to stop MaaPiCli process tree: {}",
-        errors.join("; ")
-    ))
-}
-
-#[cfg(not(windows))]
-fn stop_maa_process_tree(process: &mut MaaChildProcess, reason: &str) -> Result<(), String> {
-    let pid = process.child.id();
-    if process.poll_exit()?.is_none() {
-        process
-            .child
-            .kill()
-            .map_err(|error| format!("Failed to stop MaaPiCli process: {error}"))?;
-        log::info!("Kill sent to MaaPiCli process: pid={pid}, reason={reason}");
-
-        if !process.wait_for_exit(Duration::from_millis(MAA_PROCESS_FORCE_STOP_TIMEOUT_MS))? {
-            return Err("Timed out waiting for MaaPiCli to exit after kill".to_string());
-        }
-    } else {
-        log::info!("MaaPiCli already exited before stop: pid={pid}, reason={reason}");
-    }
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn kill_windows_process_tree(pid: u32) -> Result<(), String> {
-    let pid_arg = pid.to_string();
-    let mut command = Command::new("taskkill");
-    command
-        .args(["/PID", pid_arg.as_str(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command.creation_flags(CREATE_NO_WINDOW);
-
-    let status = command
-        .status()
-        .map_err(|error| format!("Failed to run taskkill for MaaPiCli process tree: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("taskkill exited with status {status}"))
-    }
-}
 
 pub fn build_maa_pi_config(request: &MaaTaskStartRequest) -> Value {
     let mut win32 = Map::new();
@@ -1243,9 +1000,8 @@ fn build_task_options(
     option_values: &HashMap<String, Value>,
     option_definitions: &HashMap<String, MaaOptionDefinition>,
 ) -> Vec<Value> {
-    eprintln!(
-        "[maa_bridge] build_task_options: keys={:?}, def_keys={:?}",
-        option_keys,
+    log::debug!(
+        "[maa_bridge] build_task_options: keys={option_keys:?}, def_keys={:?}",
         option_definitions.keys().collect::<Vec<_>>()
     );
     let mut options = Vec::new();
@@ -1277,7 +1033,7 @@ fn append_option(
     visited.push(option_key.to_string());
 
     let Some(option_definition) = option_definitions.get(option_key) else {
-        eprintln!("[maa_bridge] append_option: '{option_key}' NOT in definitions, skipping");
+        log::debug!("[maa_bridge] append_option: '{option_key}' NOT in definitions, skipping");
         return;
     };
 
@@ -1290,9 +1046,9 @@ fn append_option(
                 .get(key)
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            eprintln!(
-        "[maa_bridge] append_option Switch: key='{key}', enabled={enabled}, children={enabled_option_keys:?}"
-      );
+            log::debug!(
+                "[maa_bridge] append_option Switch: key='{key}', enabled={enabled}, children={enabled_option_keys:?}"
+            );
 
             options.push(json!({
               "inputs": {},
@@ -1624,8 +1380,8 @@ mod tests {
     #[test]
     fn resolves_install_root_from_executable_path() {
         assert_eq!(
-            install_root_from_exe_path(Path::new("C:/Program Files/MaaToolbox/MaaToolbox.exe")),
-            PathBuf::from("C:/Program Files/MaaToolbox")
+            install_root_from_exe_path(Path::new("C:/Program Files/NTEToolbox/NTEToolbox.exe")),
+            PathBuf::from("C:/Program Files/NTEToolbox")
         );
     }
 }

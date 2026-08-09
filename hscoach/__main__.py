@@ -112,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="友方玩家 id（1/2）。默认不传：日志自动校准（推荐）。"
                              "若传错会被自动纠正并警告（D9 合规防线）")
     parser.add_argument("--no-overlay", action="store_true", help="不启动 UI，只输出建议到终端")
+    parser.add_argument("--enable-log-config", action="store_true",
+                        help="一次性：开启炉石 log.config 后退出（客户端按钮调用）")
+    parser.add_argument("--restore-log-config", action="store_true",
+                        help="一次性：还原炉石 log.config 后退出（客户端按钮调用）")
     parser.add_argument("-v", "--verbose", action="store_true", help="详细日志")
     args = parser.parse_args(argv)
 
@@ -119,6 +123,20 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    # 一次性 log.config 操作（客户端按钮）：执行完即退出，不启动监听、不要求 API key
+    if args.enable_log_config:
+        status = ensure_log_config()
+        logger.info("log.config 开启：%s — %s", status.action, status.message)
+        print(status.message, flush=True)
+        return 0
+    if args.restore_log_config:
+        from hscoach.log_config import restore_log_config
+
+        status = restore_log_config()
+        logger.info("log.config 还原：%s — %s", status.action, status.message)
+        print(status.message, flush=True)
+        return 0
 
     # 生效配置：命令行 > 环境变量 > 配置文件 > 默认值
     cfg = effective_config(

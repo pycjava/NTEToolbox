@@ -19,7 +19,6 @@ import {
   Settings,
   Sparkles,
   Square,
-  Upload,
   X,
   XCircle
 } from "lucide-react";
@@ -61,6 +60,7 @@ import {
   type ThemeMode,
   type WindowInfo
 } from "./clientModel";
+import HsCoachPanel from "./HsCoachPanel";
 import {
   addToast,
   createToast,
@@ -187,6 +187,25 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // 管理员权限提示：开启时若进程未提权，提示一次（异环注入类功能需要管理员）
+  useEffect(() => {
+    if (!state.adminPromptEnabled) return;
+    let cancelled = false;
+
+    invoke<boolean>("is_elevated")
+      .then((elevated) => {
+        if (cancelled || elevated) return;
+        pushToast("info", "当前未以管理员身份运行，部分功能可能不可用");
+      })
+      .catch((error) => {
+        console.error("Failed to query elevation state", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.adminPromptEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,7 +368,7 @@ function App() {
             <img src="/nte-icon.png" alt="" />
           </div>
           <div>
-            <h1>MaaToolbox</h1>
+            <h1>NTEToolbox</h1>
             <p>{selectedGame ? getGameSubtitle(selectedGame) : "未选择"}</p>
           </div>
         </div>
@@ -357,9 +376,6 @@ function App() {
         <div className="top-actions">
           <button className="icon-button" type="button" aria-label="设置" title="设置" onClick={() => setIsSettingsOpen(true)}>
             <Settings size={20} />
-          </button>
-          <button className="icon-button" type="button" aria-label="检查更新" title="检查更新">
-            <Upload size={20} />
           </button>
         </div>
 
@@ -379,41 +395,51 @@ function App() {
             </div>
             <span className={`status-pill status-${selectedGame.status}`}>
               <CheckCircle2 size={16} />
-              {selectedGame.status === "ready" ? "已安装" : "预留"}
+              已安装
             </span>
           </div>
 
-          {selectedGame.controller ? (
-            <ConnectionBar
-              gameId={selectedGame.id}
-              controller={selectedGame.controller}
-              onControllerTypeChange={handleControllerTypeChange}
+          {selectedGame.kind === "process" ? (
+            <HsCoachPanel
+              game={selectedGame}
               onTargetWindowChange={handleTargetWindowChange}
               onRefreshWindows={handleRefreshWindows}
             />
-          ) : null}
-
-          <ViewToggle activeView={activeView} onViewChange={setActiveView} />
-
-          {activeView === "features" ? (
-            <FeatureList
-              game={selectedGame}
-              onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
-              onRunChange={handleRunChange}
-            />
-          ) : activeView === "library" ? (
-            <div className="mutopia-panel">
-              <MutopiaMidiBrowser
-                cachedEntries={mutopiaCache}
-                onCacheUpdate={setMutopiaCache}
-              />
-            </div>
           ) : (
-            <LiveViewPanel
-              targetWindow={selectedGame.controller?.targetWindow ?? ""}
-              connected={selectedGame.controller?.connected ?? false}
-              onError={(message) => pushToast("error", message)}
-            />
+            <>
+              {selectedGame.controller ? (
+                <ConnectionBar
+                  gameId={selectedGame.id}
+                  controller={selectedGame.controller}
+                  onControllerTypeChange={handleControllerTypeChange}
+                  onTargetWindowChange={handleTargetWindowChange}
+                  onRefreshWindows={handleRefreshWindows}
+                />
+              ) : null}
+
+              <ViewToggle activeView={activeView} onViewChange={setActiveView} />
+
+              {activeView === "features" ? (
+                <FeatureList
+                  game={selectedGame}
+                  onConfigure={(feature) => setConfigTarget({ gameId: selectedGame.id, feature })}
+                  onRunChange={handleRunChange}
+                />
+              ) : activeView === "library" ? (
+                <div className="mutopia-panel">
+                  <MutopiaMidiBrowser
+                    cachedEntries={mutopiaCache}
+                    onCacheUpdate={setMutopiaCache}
+                  />
+                </div>
+              ) : (
+                <LiveViewPanel
+                  targetWindow={selectedGame.controller?.targetWindow ?? ""}
+                  connected={selectedGame.controller?.connected ?? false}
+                  onError={(message) => pushToast("error", message)}
+                />
+              )}
+            </>
           )}
         </section>
       ) : (
@@ -1008,14 +1034,6 @@ function SettingsDialog({
               <option value="dark">暗色</option>
               <option value="system">跟随系统</option>
             </select>
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked
-              disabled
-            />
-            <span>启动时打开上次游戏</span>
           </label>
           <label className="toggle-row">
             <input

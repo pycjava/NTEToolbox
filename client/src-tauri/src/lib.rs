@@ -1,11 +1,16 @@
 mod client_config;
 mod debug_log;
+mod hs_overlay;
+mod hscoach_bridge;
 mod maa_bridge;
 mod mutopia_midi;
+mod process_tree;
 mod window_capture;
 mod window_enumeration;
 
 use debug_log::resolve_debug_log_dir;
+use hs_overlay::HsOverlayRuntime;
+use hscoach_bridge::{HsCoachConfigPayload, HsCoachRuntime, HsCoachStateSnapshot};
 use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate};
 use mutopia_midi::{DownloadedMidiEntry, MutopiaMidiEntry, MutopiaMidiDownloadRequest};
 use serde_json::Value;
@@ -201,6 +206,169 @@ fn enumerate_windows() -> Result<Vec<WindowInfo>, String> {
     window_enumeration::enumerate_visible_windows()
 }
 
+// ── 管理员权限检测 ────────────────────────────────────────────────────
+
+#[cfg(windows)]
+type WindowsHandle = isize;
+
+#[cfg(windows)]
+const TOKEN_QUERY: u32 = 0x0008;
+#[cfg(windows)]
+const TOKEN_ELEVATION_INFO_CLASS: i32 = 20;
+
+#[cfg(windows)]
+#[repr(C)]
+struct TokenElevation {
+    token_is_elevated: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "advapi32")]
+extern "system" {
+    fn OpenProcessToken(
+        process: WindowsHandle,
+        desired_access: u32,
+        token_handle: *mut WindowsHandle,
+    ) -> i32;
+    fn GetTokenInformation(
+        token_handle: WindowsHandle,
+        info_class: i32,
+        token_information: *mut std::ffi::c_void,
+        token_information_length: u32,
+        return_length: *mut u32,
+    ) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcess() -> WindowsHandle;
+    fn CloseHandle(handle: WindowsHandle) -> i32;
+}
+
+/// 检测当前进程是否以管理员权限运行。
+/// 未提权时返回 false（供前端提示：异环注入类功能需要管理员）。
+#[cfg(windows)]
+fn is_process_elevated() -> bool {
+    let mut token: WindowsHandle = 0;
+    let ok = unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY,
+            &mut token,
+        )
+    };
+    if ok == 0 {
+        log::warn!("OpenProcessToken failed: {}", std::io::Error::last_os_error());
+        return false;
+    }
+
+    let mut elevation = TokenElevation { token_is_elevated: 0 };
+    let mut return_length: u32 = 0;
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TOKEN_ELEVATION_INFO_CLASS,
+            &mut elevation as *mut TokenElevation as *mut std::ffi::c_void,
+            std::mem::size_of::<TokenElevation>() as u32,
+            &mut return_length,
+        )
+    };
+    unsafe {
+        CloseHandle(token);
+    }
+    if ok == 0 {
+        log::warn!("GetTokenInformation failed: {}", std::io::Error::last_os_error());
+        return false;
+    }
+
+    elevation.token_is_elevated != 0
+}
+
+#[cfg(not(windows))]
+fn is_process_elevated() -> bool {
+    false
+}
+
+#[tauri::command]
+fn is_elevated() -> bool {
+    is_process_elevated()
+}
+
+// ── 炉石教练桥 ────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn start_hscoach(
+    app: AppHandle,
+    state: State<'_, Mutex<HsCoachRuntime>>,
+) -> Result<(), String> {
+    state.lock().map_err(|e| e.to_string())?.start(&app)
+}
+
+#[tauri::command]
+fn stop_hscoach(state: State<'_, Mutex<HsCoachRuntime>>) -> Result<(), String> {
+    state.lock().map_err(|e| e.to_string())?.stop()
+}
+
+#[tauri::command]
+fn poll_hscoach_state(
+    app: AppHandle,
+    state: State<'_, Mutex<HsCoachRuntime>>,
+) -> Result<HsCoachStateSnapshot, String> {
+    state.lock().map_err(|e| e.to_string())?.poll_state(&app)
+}
+
+#[tauri::command]
+fn get_hscoach_config() -> Result<HsCoachConfigPayload, String> {
+    hscoach_bridge::get_config()
+}
+
+#[tauri::command]
+fn save_hscoach_config(config: HsCoachConfigPayload) -> Result<(), String> {
+    hscoach_bridge::save_config(&config)
+}
+
+#[tauri::command]
+fn set_hs_logging(app: AppHandle, enabled: bool) -> Result<String, String> {
+    hscoach_bridge::set_hs_logging(&app, enabled)
+}
+
+#[tauri::command]
+fn show_hs_overlay(
+    app: AppHandle,
+    state: State<'_, Mutex<HsOverlayRuntime>>,
+    target_window: String,
+) -> Result<(), String> {
+    let hwnd = parse_overlay_target_window(&target_window);
+    {
+        let overlay = state.lock().map_err(|e| e.to_string())?;
+        overlay.set_target(hwnd);
+    }
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .show(&app)
+}
+
+#[tauri::command]
+fn hide_hs_overlay(app: AppHandle, state: State<'_, Mutex<HsOverlayRuntime>>) -> Result<(), String> {
+    let mut overlay = state.lock().map_err(|e| e.to_string())?;
+    overlay.hide(&app);
+    Ok(())
+}
+
+fn parse_overlay_target_window(target_window: &str) -> Option<isize> {
+    let trimmed = target_window.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .and_then(|hex| isize::from_str_radix(hex, 16).ok())
+        .or_else(|| trimmed.parse::<isize>().ok())
+}
+
 #[tauri::command]
 fn stop_maa_task(
     runtime: State<'_, Mutex<MaaBridgeRuntime>>,
@@ -278,6 +446,28 @@ fn stop_maa_runtime_on_exit(app: &AppHandle) {
     };
 }
 
+fn stop_hscoach_runtime_on_exit(app: &AppHandle) {
+    let runtime = app.state::<Mutex<HsCoachRuntime>>();
+    match runtime.lock() {
+        Ok(mut runtime) => {
+            if let Err(error) = runtime.stop() {
+                log::warn!("Failed to stop hscoachd on app exit: {error}");
+            }
+        }
+        Err(error) => {
+            log::warn!("Failed to lock hscoach runtime on app exit: {error}");
+        }
+    };
+
+    let overlay = app.state::<Mutex<HsOverlayRuntime>>();
+    match overlay.lock() {
+        Ok(mut overlay) => overlay.hide(app),
+        Err(error) => {
+            log::warn!("Failed to lock hs overlay on app exit: {error}");
+        }
+    };
+}
+
 // ── 入口 ─────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -285,6 +475,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(MaaBridgeRuntime::default()))
         .manage(Mutex::new(LiveViewCapture::new()))
+        .manage(Mutex::new(HsCoachRuntime::default()))
+        .manage(Mutex::new(HsOverlayRuntime::new()))
         .setup(|app| {
             let debug_log_dir = client_debug_log_dir(app)?;
             app.handle().plugin(
@@ -310,12 +502,24 @@ pub fn run() {
             list_downloaded_midi,
             enumerate_windows,
             start_live_view,
-            stop_live_view
+            stop_live_view,
+            is_elevated,
+            start_hscoach,
+            stop_hscoach,
+            poll_hscoach_state,
+            get_hscoach_config,
+            save_hscoach_config,
+            set_hs_logging,
+            show_hs_overlay,
+            hide_hs_overlay
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match event {
-            RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_maa_runtime_on_exit(app),
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+                stop_maa_runtime_on_exit(app);
+                stop_hscoach_runtime_on_exit(app);
+            }
             _ => {}
         });
 }

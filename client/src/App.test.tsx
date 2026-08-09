@@ -46,9 +46,7 @@ describe("App", () => {
     invokeMock.mockResolvedValue(null);
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "MaaToolbox" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "NTEToolbox" })).toBeTruthy();
-    expect(screen.getByText("异环工具箱")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "NTEToolbox" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "模拟器窗口 1" })).toBeNull();
   });
 
@@ -464,7 +462,7 @@ describe("App", () => {
 
     // 无效的 lastOpenedGameId 应回退到默认 nte，不崩溃
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "NTEToolbox" })).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "NTEToolbox" })).toBeTruthy();
     });
     // 不应抛错，且 nte 的功能行可见
     expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();

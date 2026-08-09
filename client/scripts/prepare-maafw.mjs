@@ -35,6 +35,26 @@ await writeRuntimeInterface(hasPackagedAgent);
 
 console.log(`Prepared MaaFramework runtime at ${runtimeDir}`);
 
+// ── 炉石教练后端（hscoachd） ─────────────────────────────────────────
+// dist/hscoachd/（onedir，含 data/ 离线卡库）→ gen/hscoach/
+const hscoachdSourceDir = path.resolve(repoRoot, "dist", "hscoachd");
+const hscoachdDir = path.resolve(generatedDir, "hscoach");
+await assertSafeGeneratedRuntimeDir(hscoachdDir);
+await rm(hscoachdDir, { recursive: true, force: true });
+
+try {
+  await copyRequiredDirectory(hscoachdSourceDir, hscoachdDir);
+  console.log(`Prepared hscoachd runtime at ${hscoachdDir}`);
+} catch (error) {
+  if (error?.code === "ENOENT") {
+    // 开发环境可无 hscoachd：创建空目录保证 tauri 资源校验通过
+    await mkdir(hscoachdDir, { recursive: true });
+    console.warn(`dist/hscoachd not found (${hscoachdSourceDir}); bundled empty hscoach dir`);
+  } else {
+    throw error;
+  }
+}
+
 async function assertSafeGeneratedRuntimeDir(targetDir) {
   const relativePath = path.relative(generatedDir, targetDir);
   if (relativePath === "" || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
