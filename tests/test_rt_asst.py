@@ -275,7 +275,7 @@ class RtAsstFishScreenshotTest(unittest.TestCase):
             ):
                 path = rt_asst.get_fish_screenshot_path(100.123)
 
-            self.assertEqual(path.parent, Path(temp_dir))
+            self.assertEqual(path.parent, Path(temp_dir, "fish"))
             self.assertRegex(path.name, r"^fish_\d{8}_\d{6}_123\.png$")
 
     def test_get_option_reads_fish_screenshot_settings(self):

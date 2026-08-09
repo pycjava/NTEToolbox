@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "MaaToolbox Client",
-  "version": "0.0.0",
+  "productName": "NTEToolbox",
+  "version": "2.0.0",
   "identifier": "com.ntetoolbox.client",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "MaaToolbox",
+        "title": "异环工具箱",
         "width": 1120,
         "height": 760,
         "minWidth": 820,
@@ -34,6 +34,7 @@
     },
     "resources": {
       "gen/maafw/": "maafw/",
+      "gen/hscoach/": "hscoach/",
       "gen/WebView2Loader.dll": "./"
     },
     "icon": [

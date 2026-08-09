@@ -122,7 +122,7 @@ if ($TauriOutputDir -ne "") {
 }
 
 Add-BuildStep `
-    -Name "Build MaaToolbox Client (Tauri)" `
+    -Name "Build NTEToolbox Client (Tauri)" `
     -ScriptPath (Join-Path $toolsDir "build_tauri.ps1") `
     -Arguments $tauriArgs
 

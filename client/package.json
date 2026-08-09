@@ -1,7 +1,7 @@
 {
   "name": "ntetoolbox-client",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "packageManager": "pnpm@11.3.0",
   "scripts": {

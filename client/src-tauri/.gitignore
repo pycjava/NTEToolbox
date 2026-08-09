@@ -3,3 +3,5 @@
 /target/
 /gen/schemas
 /gen/maafw
+/gen/hscoach
+/gen/WebView2Loader.dll
