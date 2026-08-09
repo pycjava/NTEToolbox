@@ -1,6 +1,11 @@
-# 异环工具箱
+# NTEToolbox（异环工具箱）
 
-基于 MaaFramework 的《异环》自动化工具。当前主界面是 **MaaToolbox Client**，使用 Tauri v2 + React 构建，后端通过 MaaPiCli 调用 Python agent 和 Maa 资源。
+基于 MaaFramework 的多游戏自动化工具箱，主界面是 **NTEToolbox 客户端**（Tauri v2 + React），后端通过 MaaPiCli 调用 Python agent 和 Maa 资源。
+
+当前内置两个游戏模块：
+
+- **异环（NTE）**：自动钓鱼、弹钢琴、实时辅助等 Maa 自动化任务。
+- **炉石传说**：AI 教练（hscoach）——读取对局日志实时解析局面，回合开始时生成出牌建议（本地分析、D9 隐私合规，不读取对手手牌）。
 
 项目主要面向 Windows x64。仓库内仍保留 MaaFramework 支持的多控制器声明，但当前开发、构建和发布说明都以 Windows 客户端为准。
 
@@ -8,13 +13,26 @@
 
 ## 功能
 
-### MaaToolbox Client
+### NTEToolbox 客户端
 
+- 多游戏模块：顶部图标切换「异环」与「炉石传说」，各自的配置与运行状态独立持久化。
 - 自动读取 `assets/interface.jsonc` 中的任务、选项和控制器配置。
 - 支持选择目标游戏窗口，默认匹配窗口标题为 `异环` 或 `NTE` 的 `UnrealWindow`。
 - 支持实时画面预览，用于确认窗口选择和截图状态。
 - 任务配置会保存到客户端配置文件，重启后恢复。
 - 日志默认写入程序目录下的 `debug` 文件夹；如果该目录不可写，会写入 Tauri 本地数据目录的 `maa-runtime\debug`。
+
+### 炉石 AI 教练（hscoach）
+
+炉石模块是客户端内的一等模块：主窗口提供「教练运行 / LLM 配置 / 炉石日志 / 游戏内悬浮窗 / 建议 / 对局状态」面板，同时支持独立的便携版 `HsCoach`。
+
+- 实时监听 `Power.log`（国服/全球版路径自动检测），回合开始时调用 LLM 生成出牌建议（headline / 原因 / 步骤 / 警告）。
+- 对局快照（血量、法力、手牌、牌库、场面）实时发布，客户端主窗口与游戏内悬浮窗同步展示。
+- **游戏内悬浮窗**：透明、置顶、点击穿透，跟随炉石窗口显示最新建议（一期 Rust 实现，随客户端分发）。
+- LLM 配置（API key / 模型 / 地址）与独立版 HsCoach 共享 `%APPDATA%\NTEToolbox\hscoach\config.json`。
+- 炉石日志开关：客户端内一键开启/还原 `log.config`（备份与回滚逻辑与独立版一致）。
+- D9 合规红线：客户端与悬浮窗只消费已过滤的 `advice.json` / `game_state.json`，不接触原始日志。
+- 独立版 `HsCoach`（tkinter 悬浮窗）继续单独发布，适合不想安装客户端的用户。
 
 ### 自动钓鱼
 
@@ -55,17 +73,25 @@ MIDI 解析依赖 `music21`，源码运行时由 Python 项目依赖安装；发
 
 在 [Release](https://github.com/op200/NTEToolbox/releases) 下载最新发布包。
 
-当前仓库默认构建 **NSIS 安装包** 和便携运行需要的 exe/dll 文件，不再默认生成 MSI。普通用户优先使用安装包；如果直接运行便携 exe，确保 `WebView2Loader.dll` 和 `MaaToolbox Client.exe` 在同一目录。
+当前仓库默认构建 **NSIS 安装包** 和便携运行需要的 exe/dll 文件，不再默认生成 MSI。普通用户优先使用安装包；如果直接运行便携 exe，确保 `WebView2Loader.dll` 和 `NTEToolbox.exe` 在同一目录。
 
-发布版已包含 MaaFramework 运行资源和打包后的 `agent.exe`。普通用户不需要额外安装 Python、`maafw` 或 `music21`。
+发布版已包含 MaaFramework 运行资源、打包后的 `agent.exe` 和 `hscoachd.exe`。普通用户不需要额外安装 Python、`maafw` 或 `music21`。
 
-### 启动
+### 启动（异环模块）
 
-1. 以管理员身份运行 `MaaToolbox Client.exe`。后台窗口控制和部分截图/输入方式需要管理员权限。
+1. 以管理员身份运行 `NTEToolbox.exe`。后台窗口控制和部分截图/输入方式需要管理员权限。
 2. 在客户端中选择控制器和目标游戏窗口。
 3. 确认实时画面预览正常。
 4. 根据需要配置全局设置或具体任务。
 5. 启动对应任务。
+
+### 使用（炉石模块）
+
+1. 在客户端顶部切换到「炉石传说」。
+2. 在「LLM 配置」填入 API key（如 DeepSeek）并保存。
+3. 点击「开启日志」（或在「炉石日志」手动开启 Power 日志）。
+4. 启动教练，打一局炉石：回合开始时「最新建议」出现出牌建议。
+5. 可选：选择炉石窗口后「显示悬浮窗」，游戏内悬浮窗跟随窗口展示建议与血量/法力。
 
 注意事项：
 
@@ -77,17 +103,18 @@ MIDI 解析依赖 `music21`，源码运行时由 Python 项目依赖安装；发
 
 ```text
 NTEToolbox/
-├── agent/                  # Python agent，自定义动作和核心任务逻辑
+├── agent/                  # Python agent，自定义动作和核心任务逻辑（异环）
+├── hscoach/                # 炉石 AI 教练模块（日志解析 / LLM 建议 / 配置）
 ├── assets/
 │   ├── interface.jsonc      # Maa 项目接口，定义任务、选项、控制器
 │   ├── resource/            # Maa pipeline、图片和 OCR 运行资源
 │   └── MaaCommonAssets/     # OCR 模型子模块
 ├── client/                  # Tauri v2 + React 客户端
-│   ├── src/                 # React/TypeScript 前端
-│   ├── src-tauri/           # Rust/Tauri 后端
+│   ├── src/                 # React/TypeScript 前端（含炉石面板与悬浮窗）
+│   ├── src-tauri/           # Rust/Tauri 后端（含 hscoachd/overlay 桥）
 │   └── scripts/             # Maa 运行资源准备脚本
 ├── deps/                    # MaaFramework 运行时，手动下载，不入 Git
-├── dist/                    # PyInstaller 输出，主要是 agent.exe
+├── dist/                    # PyInstaller 输出：agent.exe、hscoachd/、HsCoach/
 ├── dist-tauri/              # build_tauri.ps1 汇总后的客户端产物
 ├── tests/                   # Python 测试
 ├── tools/                   # 构建和配置脚本
@@ -209,7 +236,7 @@ cd ..
 2. 安装或切换到 `stable-x86_64-pc-windows-gnu`。
 3. 验证 Python 3.14+ 和 pnpm。
 4. 设置 `CARGO_TARGET_DIR`，默认使用 `%TEMP%\ntetoolbox-tauri-target`，避免 OneDrive 同步目录影响 Rust 构建。
-5. 安装 Python 包并用 PyInstaller 生成 `dist\agent.exe`。
+5. 安装 Python 包并用 PyInstaller 生成 `dist\agent.exe`，随后生成客户端内置的 `dist\hscoachd\`（炉石教练 headless 后端，含离线卡库）。
 6. 执行 Tauri compile-only 构建，注入 release 版 `WebView2Loader.dll`。
 7. 生成 NSIS 安装包，并把产物复制到 `dist-tauri`。
 
@@ -217,10 +244,24 @@ cd ..
 
 | 产物 | 路径 |
 |------|------|
-| 客户端 exe | `dist-tauri\MaaToolbox Client.exe` |
+| 客户端 exe | `dist-tauri\NTEToolbox.exe` |
 | WebView2Loader.dll | `dist-tauri\WebView2Loader.dll` |
-| NSIS 安装包 | `dist-tauri\MaaToolbox Client_*_x64-setup.exe` |
-| Python agent | `dist\agent.exe` |
+| NSIS 安装包 | `dist-tauri\NTEToolbox_*_x64-setup.exe` |
+| Python agent（异环） | `dist\agent.exe` |
+| 炉石教练后端（客户端内置） | `dist\hscoachd\hscoachd.exe` |
+
+独立版炉石教练（tkinter 悬浮窗）单独构建：
+
+```powershell
+.\tools\build_hscoach.ps1
+# 产物：dist\HsCoach\ 与 dist\HsCoach-<版本>-win64.zip
+```
+
+无 GUI 的 headless 分发包（macos/linux/android，供自编译用户）由 CI 组装：
+
+```powershell
+python .\tools\build_headless.py --version v2.0.0 --os linux --arch x86_64
+```
 
 可自定义 Rust 产物目录和输出目录：
 
@@ -309,6 +350,8 @@ cargo fmt
 ## 日志与配置
 
 - 客户端配置保存为 Tauri 应用配置目录下的 `client-config.json`。
+- 炉石教练配置保存为 `%APPDATA%\NTEToolbox\hscoach\config.json`（与独立版共享）。
+- 炉石建议与对局快照发布到 Tauri 本地数据目录的 `hscoach\advice.json` / `game_state.json`（原子写，客户端与悬浮窗只读消费）。
 - 程序优先在 exe 同目录写入 `debug`。如果不可写，会写入 Tauri 本地数据目录下的 `maa-runtime\debug`。
 - Maa 运行时会在内部生成 `config\maa_pi_config.json`。
 - 全局设置中的日志开关本质上会修改 Maa 运行时的 `config\maa_option.json`，部分设置需要重启任务或客户端后生效。
@@ -337,6 +380,17 @@ git submodule update --init --recursive
 ```powershell
 python .\tools\configure.py
 ```
+
+#### 炉石模块：启动教练后没有建议
+
+1. 确认炉石已开启 Power 日志（客户端「炉石日志」→「开启日志」，或检查 `log.config` 含 `[Power]` 与 `FilePrinting=true`）。
+2. 确认 LLM 配置已保存且 API key 有效（可在「LLM 配置」重新保存，运行中需重启教练）。
+3. 需要打一局炉石（Power.log 有对局内容）——`CREATE_GAME` 之后才解析；回合开始时才会触发建议。
+4. 日志可查 Tauri 本地数据目录 `hscoach\` 下的发布文件与客户端 `debug` 日志。
+
+#### 悬浮窗不跟随炉石窗口
+
+在「游戏内悬浮窗」下拉框中选择炉石窗口（而非其它窗口），再点「显示悬浮窗」。窗口消失时悬浮窗会自动隐藏。
 
 #### `gcc` / `ld` / `dlltool` not found
 

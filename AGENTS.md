@@ -61,17 +61,20 @@ NTEToolbox/
 2. 验证 Rust GNU 工具链
 3. 设置 `CARGO_TARGET_DIR` 到 `%TEMP%\ntetoolbox-tauri-target`（避免 OneDrive 同步问题）
 4. `pip install -e . pyinstaller` + `tools/build_agent.py` → `dist/agent.exe`
-5. `cd client && pnpm tauri build`（内含 `pnpm build && pnpm prepare:maafw`）
-6. 复制产物到 `dist-tauri/`
+5. `tools/build_hscoachd.py` → `dist/hscoachd/`（炉石教练 headless 后端，含离线卡库）
+6. `cd client && pnpm tauri build`（内含 `pnpm build && pnpm prepare:maafw`，后者把 `dist/hscoachd/` 复制进 `gen/hscoach/`）
+7. 复制产物到 `dist-tauri/`
 
 ### 构建产物
 
 | 产物 | 路径 |
 |------|------|
-| 可执行文件 | `dist-tauri\MaaToolbox Client.exe` |
+| 可执行文件 | `dist-tauri\NTEToolbox.exe` |
 | WebView2Loader.dll | `dist-tauri\WebView2Loader.dll`（必须和 exe 同目录） |
-| NSIS 安装包 | `dist-tauri\MaaToolbox Client_*_x64-setup.exe` |
-| MSI 安装包 | `dist-tauri\MaaToolbox Client_*_x64_en-US.msi`（需启用 VBSCRIPT） |
+| NSIS 安装包 | `dist-tauri\NTEToolbox_*_x64-setup.exe` |
+| MSI 安装包 | 不生成（默认仅 NSIS） |
+| 异环 agent | `dist\agent.exe` |
+| 炉石教练后端 | `dist\hscoachd\hscoachd.exe`（客户端内置） |
 
 > **重要**：直接运行 exe 需要 `WebView2Loader.dll` 在同一目录；使用 NSIS 安装包则自动处理。
 
