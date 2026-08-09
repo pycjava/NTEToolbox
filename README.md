@@ -32,7 +32,7 @@
 - LLM 配置（API key / 模型 / 地址）与独立版 HsCoach 共享 `%APPDATA%\NTEToolbox\hscoach\config.json`。
 - 炉石日志开关：客户端内一键开启/还原 `log.config`（备份与回滚逻辑与独立版一致）。
 - D9 合规红线：客户端与悬浮窗只消费已过滤的 `advice.json` / `game_state.json`，不接触原始日志。
-- **自定义游戏图标**：顶部游戏图标默认使用原创占位图（不包含任何官方素材）；如需替换，把同名 PNG 放到 `%APPDATA%\NTEToolbox\icons\` 目录（如 `hs.png`），切换游戏后生效。
+- **自定义游戏图标**：顶部游戏图标默认使用炉石传说官方徽章（取自 playhearthstone.com 官方素材）；如需替换，把同名 PNG 放到 `%APPDATA%\NTEToolbox\icons\` 目录（如 `hs.png`），切换游戏后生效。
 - 独立版 `HsCoach`（tkinter 悬浮窗）继续单独发布，适合不想安装客户端的用户。
 
 ### 自动钓鱼
