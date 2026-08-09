@@ -365,7 +365,7 @@ function App() {
       <header className="top-bar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            <img src="/nte-icon.png" alt="" />
+            <img src={selectedGame?.icon ?? "/nte-icon.png"} alt="" />
           </div>
           <div>
             <h1>NTEToolbox</h1>

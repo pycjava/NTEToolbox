@@ -92,6 +92,7 @@ describe("client data adapter", () => {
       id: "hs",
       name: "炉石传说",
       shortName: "炉",
+      icon: "/hs-icon.png",
       status: "ready",
       kind: "process"
     });

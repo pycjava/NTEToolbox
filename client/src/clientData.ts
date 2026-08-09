@@ -73,6 +73,7 @@ const HS_GAME: GameDefinition = {
   name: "炉石传说",
   description: "AI 教练：实时对局解析与出牌建议",
   shortName: "炉",
+  icon: "/hs-icon.png",
   status: "ready",
   kind: "process",
   features: [],
