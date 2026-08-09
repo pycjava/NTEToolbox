@@ -467,4 +467,41 @@ describe("App", () => {
     // 不应抛错，且 nte 的功能行可见
     expect(screen.getByRole("article", { name: /钓鱼/ })).toBeTruthy();
   });
+
+  it("uses the built-in icon when no custom game icon is provided", async () => {
+    invokeMock.mockResolvedValue(null);
+    render(<App />);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("get_custom_game_icon", { gameId: "nte" });
+    });
+
+    const brandImage = document.querySelector(".brand-mark img") as HTMLImageElement | null;
+    expect(brandImage?.getAttribute("src")).toBe("/nte-icon.png");
+  });
+
+  it("shows the user-provided custom icon for the selected game", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_custom_game_icon") {
+        return Promise.resolve("data:image/png;base64,iVBORw0KGgo=");
+      }
+      return Promise.resolve(null);
+    });
+    render(<App />);
+
+    await waitFor(() => {
+      const brandImage = document.querySelector(".brand-mark img") as HTMLImageElement | null;
+      expect(brandImage?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    });
+
+    // 切换器中的选中游戏同样使用自定义图标
+    const hsButton = screen.getByRole("button", { name: "炉石传说" });
+    fireEvent.click(hsButton);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("get_custom_game_icon", { gameId: "hs" });
+    });
+    const hsImage = hsButton.querySelector("img") as HTMLImageElement | null;
+    expect(hsImage?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+  });
 });

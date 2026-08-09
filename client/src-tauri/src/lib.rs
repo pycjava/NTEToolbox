@@ -14,10 +14,10 @@ use hscoach_bridge::{HsCoachConfigPayload, HsCoachRuntime, HsCoachStateSnapshot}
 use maa_bridge::{MaaBridgeRuntime, MaaTaskRunResponse, MaaTaskStartRequest, MaaTaskStatusUpdate};
 use mutopia_midi::{DownloadedMidiEntry, MutopiaMidiEntry, MutopiaMidiDownloadRequest};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{fs, thread};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
@@ -295,6 +295,64 @@ fn is_elevated() -> bool {
     is_process_elevated()
 }
 
+// ── 自定义游戏图标 ────────────────────────────────────────────────────
+
+/// 用户自定义游戏图标目录（Windows: %APPDATA%\NTEToolbox\icons\）。
+/// 与 hscoach 共享配置目录同一根下；素材由用户自备，安装包内不含官方素材。
+fn custom_game_icons_dir() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var("APPDATA")
+            .map_err(|_| "APPDATA environment variable is not set".to_string())?;
+        Ok(PathBuf::from(appdata)
+            .join("NTEToolbox")
+            .join("icons"))
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+        Ok(PathBuf::from(home)
+            .join(".config")
+            .join("NTEToolbox")
+            .join("icons"))
+    }
+}
+
+/// 读取用户自定义游戏图标 `{game_id}.png`，返回 data URL。
+/// 文件不存在或 game_id 非法时返回 None，前端回退到内置图标。
+fn load_custom_game_icon(icons_dir: &Path, game_id: &str) -> Result<Option<String>, String> {
+    // 只接受安全字符，防止路径穿越读取任意文件
+    if game_id.is_empty()
+        || !game_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Ok(None);
+    }
+
+    let icon_path = icons_dir.join(format!("{game_id}.png"));
+    if !icon_path.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(&icon_path)
+        .map_err(|error| format!("Failed to read custom game icon: {error}"))?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "data:image/png;base64,{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)
+    )))
+}
+
+#[tauri::command]
+fn get_custom_game_icon(game_id: String) -> Result<Option<String>, String> {
+    let icons_dir = custom_game_icons_dir()?;
+    load_custom_game_icon(&icons_dir, &game_id)
+}
+
 // ── 炉石教练桥 ────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -511,7 +569,8 @@ pub fn run() {
             save_hscoach_config,
             set_hs_logging,
             show_hs_overlay,
-            hide_hs_overlay
+            hide_hs_overlay,
+            get_custom_game_icon
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -522,6 +581,47 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod game_icon_tests {
+    use super::load_custom_game_icon;
+    use std::fs;
+
+    fn temp_icons_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn returns_none_for_missing_or_unsafe_game_ids() {
+        let dir = temp_icons_dir("nte-icon-test-none");
+
+        assert!(load_custom_game_icon(&dir, "hs").unwrap().is_none());
+        assert!(load_custom_game_icon(&dir, "").unwrap().is_none());
+        assert!(load_custom_game_icon(&dir, "../foo").unwrap().is_none());
+        assert!(load_custom_game_icon(&dir, "a/b.png").unwrap().is_none());
+        assert!(load_custom_game_icon(&dir, "a\\b").unwrap().is_none());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn returns_data_url_for_existing_png() {
+        let dir = temp_icons_dir("nte-icon-test-existing");
+        // PNG 魔数：89 50 4E 47 0D 0A 1A 0A
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        fs::write(dir.join("hs.png"), &png).unwrap();
+
+        let data_url = load_custom_game_icon(&dir, "hs").unwrap().unwrap();
+        assert!(data_url.starts_with("data:image/png;base64,"));
+        // base64(89 50 4E 47) = iVBORw0K，作为首个 3 字节组校验
+        assert!(data_url.contains("iVBORw0K"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]

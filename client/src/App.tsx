@@ -146,6 +146,8 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeView, setActiveView] = useState<"features" | "live" | "library">("features");
   const [mutopiaCache, setMutopiaCache] = useState<MutopiaMidiEntry[] | null>(null);
+  // 用户自定义游戏图标（%APPDATA%\NTEToolbox\icons\{gameId}.png 的 data URL，未提供时为 null）
+  const [customIcon, setCustomIcon] = useState<string | null>(null);
   const stateRef = useRef(state);
   const { toasts, pushToast, dismiss } = useToasts();
 
@@ -242,6 +244,25 @@ function App() {
     () => state.games.find((game) => game.id === state.selectedGameId) ?? state.games[0],
     [state.games, state.selectedGameId]
   );
+
+  // 自定义游戏图标覆盖：每次切换游戏重新拉取，用户放入图标文件后切走再切回即可生效。
+  useEffect(() => {
+    let cancelled = false;
+    setCustomIcon(null);
+
+    invoke<string | null>("get_custom_game_icon", { gameId: selectedGame?.id ?? "" })
+      .then((dataUrl) => {
+        if (!cancelled) setCustomIcon(dataUrl);
+      })
+      .catch((error) => {
+        console.error("Failed to load custom game icon", error);
+        if (!cancelled) setCustomIcon(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGame?.id]);
 
   function handleSelectGame(gameId: string) {
     setState((current) => selectGame(current, gameId));
@@ -365,7 +386,7 @@ function App() {
       <header className="top-bar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            <img src={selectedGame?.icon ?? "/nte-icon.png"} alt="" />
+            <img src={customIcon ?? selectedGame?.icon ?? "/nte-icon.png"} alt="" />
           </div>
           <div>
             <h1>NTEToolbox</h1>
@@ -383,6 +404,7 @@ function App() {
           games={state.games}
           selectedGameId={state.selectedGameId}
           onSelectGame={handleSelectGame}
+          customIcon={customIcon}
         />
       </header>
 
@@ -525,9 +547,10 @@ type GameSwitcherProps = {
   games: GameDefinition[];
   selectedGameId: string;
   onSelectGame: (gameId: string) => void;
+  customIcon: string | null;
 };
 
-function GameSwitcher({ games, selectedGameId, onSelectGame }: GameSwitcherProps) {
+function GameSwitcher({ games, selectedGameId, onSelectGame, customIcon }: GameSwitcherProps) {
   return (
     <nav className="game-switcher" aria-label="游戏选择">
       {games.map((game) => (
@@ -539,7 +562,7 @@ function GameSwitcher({ games, selectedGameId, onSelectGame }: GameSwitcherProps
           title={game.name}
           onClick={() => { onSelectGame(game.id); }}
         >
-          <span>{game.icon ? <img src={game.icon} alt={game.name} /> : game.shortName}</span>
+          <span>{game.icon ? <img src={game.id === selectedGameId && customIcon ? customIcon : game.icon} alt={game.name} /> : game.shortName}</span>
         </button>
       ))}
     </nav>
