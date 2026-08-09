@@ -11,6 +11,7 @@ from maa.agent.agent_server import AgentServer
 from maa.custom_action import CustomAction
 from maa.define import OCRResult
 
+from . import rt_asst
 from .log import log
 from .maafw_tools import get_img
 from .utils import Manual_stop, type_match
@@ -36,6 +37,10 @@ class Fish_option:
 
     卖鱼买换饵开关: bool
     买饵次数: int
+
+    S级鱼截图: bool
+    金色鱼截图: bool
+    鱼截图冷却时间: int
 
 
 def parse_stop_time(attach: dict, /) -> datetime.datetime | None:
@@ -107,6 +112,21 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Fish_option:
         if not 0 < 买饵次数 < 20:
             raise ValueError("买饵次数 值范围不正常")
 
+        # 鱼截图
+        S级鱼截图 = attach.get("S级鱼截图", False)
+        if not isinstance(S级鱼截图, bool):
+            raise TypeError("S级鱼截图 类型不是 bool")
+
+        金色鱼截图 = attach.get("金色鱼截图", False)
+        if not isinstance(金色鱼截图, bool):
+            raise TypeError("金色鱼截图 类型不是 bool")
+
+        鱼截图冷却时间 = attach.get("鱼截图冷却时间", attach.get("S级鱼截图冷却时间", 5))
+        if not isinstance(鱼截图冷却时间, int):
+            raise TypeError("鱼截图冷却时间 类型不是 int")
+        if 鱼截图冷却时间 < 0:
+            raise ValueError("鱼截图冷却时间 不能小于 0")
+
     except Exception as e:
         log.error(f"选项初始化错误: {e} {e!r}\n{traceback.format_exc()}")
         raise
@@ -117,6 +137,9 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Fish_option:
         溜鱼_midpoint_sleep_time=溜鱼_midpoint_sleep_time,
         卖鱼买换饵开关=卖鱼买换饵开关,
         买饵次数=买饵次数,
+        S级鱼截图=S级鱼截图,
+        金色鱼截图=金色鱼截图,
+        鱼截图冷却时间=鱼截图冷却时间,
     )
 
 
@@ -486,6 +509,10 @@ class Fish(CustomAction):
         context: Context,
         argv: CustomAction.RunArg,
     ) -> bool:
+        log.debug(
+            f"Fish.run() called: node={argv.node_name}, "
+            f"stopping={context.tasker.stopping}"
+        )
         option: Fish_option = get_option(context, argv)
         log.debug(f"{option=}")
 
@@ -494,6 +521,7 @@ class Fish(CustomAction):
             controller.post_click_key(key.value.code).wait()
 
         fail_num: int = 0
+        fish_screenshot_state = rt_asst.FishScreenshotState()
         with suppress(Manual_stop):
             while not context.tasker.stopping:
                 if (
@@ -514,6 +542,12 @@ class Fish(CustomAction):
                     # 继续，直接进入获鱼识别
 
                 if reco_获鱼(context, img):
+                    rt_asst.try_save_fish_screenshot(
+                        context,
+                        img,
+                        option,
+                        fish_screenshot_state,
+                    )
                     post_click_key(Win_virtual_key.VK_ESCAPE)
                     time.sleep(0.6)  # 等待获鱼界面消失，防止连续按 ESC
                     continue
@@ -537,8 +571,8 @@ class Fish(CustomAction):
                 if fail_num > FISH_RECO_FIAL_NUM_MAX:
                     log.error("多次识别失败，终止运行")
                     return False
-                log.debug("什么都没识别到，尝试按 F")
-                post_click_key(Win_virtual_key.F)
+                log.debug("什么都没识别到，等待中...")
                 fail_num += 1
+                time.sleep(0.5)
 
         return True

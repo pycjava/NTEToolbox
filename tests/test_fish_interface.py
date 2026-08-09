@@ -41,6 +41,59 @@ class FishInterfaceStopTimeTest(unittest.TestCase):
             self.assertNotIn(old_name, options)
         self.assertNotIn("钓鱼通用设置", options)
 
+    def test_fish_screenshot_options_belong_to_fishing_task(self):
+        interface = load_interface()
+        fish_task = next(task for task in interface["task"] if task["name"] == "钓鱼")
+        assist_task = next(task for task in interface["task"] if task["name"] == "实时辅助")
+        options = interface["option"]
+
+        self.assertIn("钓鱼_S级鱼截图", fish_task["option"])
+        self.assertIn("钓鱼_金色鱼截图", fish_task["option"])
+        self.assertIn("钓鱼_鱼截图_设置", fish_task["option"])
+        self.assertNotIn("实时辅助_S级鱼截图", fish_task["option"])
+        self.assertNotIn("实时辅助_S级鱼截图_设置", fish_task["option"])
+        self.assertNotIn("钓鱼_S级鱼截图", assist_task["option"])
+        self.assertNotIn("钓鱼_金色鱼截图", assist_task["option"])
+        self.assertNotIn("钓鱼_鱼截图_设置", assist_task["option"])
+        self.assertNotIn("实时辅助_S级鱼截图", assist_task["option"])
+        self.assertNotIn("实时辅助_S级鱼截图_设置", assist_task["option"])
+
+        self.assertIn("钓鱼_S级鱼截图", options)
+        self.assertIn("钓鱼_金色鱼截图", options)
+        self.assertIn("钓鱼_鱼截图_设置", options)
+        self.assertNotIn("实时辅助_S级鱼截图", options)
+        self.assertNotIn("实时辅助_S级鱼截图_设置", options)
+        self.assertEqual(
+            [
+                input_definition["name"]
+                for input_definition in options["钓鱼_鱼截图_设置"]["inputs"]
+            ],
+            ["鱼截图冷却时间"],
+        )
+        self.assertNotIn(
+            "S级鱼截图保存目录",
+            options["钓鱼_鱼截图_设置"]["pipeline_override"]["钓鱼"]["attach"],
+        )
+
+        s_rank_yes_case = next(
+            case
+            for case in options["钓鱼_S级鱼截图"]["cases"]
+            if case["name"] == "Yes"
+        )
+        self.assertEqual(
+            s_rank_yes_case["pipeline_override"]["钓鱼"]["attach"]["S级鱼截图"],
+            True,
+        )
+        golden_yes_case = next(
+            case
+            for case in options["钓鱼_金色鱼截图"]["cases"]
+            if case["name"] == "Yes"
+        )
+        self.assertEqual(
+            golden_yes_case["pipeline_override"]["钓鱼"]["attach"]["金色鱼截图"],
+            True,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

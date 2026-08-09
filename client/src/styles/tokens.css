@@ -1,0 +1,75 @@
+:root {
+  /* 无 data-theme 时回退浅色（首次渲染、SSR 降级） */
+  color-scheme: light;
+  font-family:
+    Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+/* 浅色（默认） */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-canvas: #f7f8fb;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f3f5f8;
+  --color-border: #dfe4ec;
+  --color-border-strong: #9bc5ff;
+  --color-border-muted: #cbd5e1;
+  --color-text: #151923;
+  --color-text-muted: #667085;
+  --color-primary: #1677ff;
+  --color-primary-strong: #0f5fd7;
+  --color-primary-soft: #eaf4ff;
+  --color-warning: #f97316;
+  --color-warning-soft: #fff1e8;
+  --color-success: #0f766e;
+  --color-success-soft: #e7f6f3;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fee2e2;
+  --color-on-primary: #ffffff;
+  /* 主按钮上的高光叠加色（用于 loading 渐变） */
+  --color-sheen: rgb(255 255 255 / 35%);
+  --shadow-soft: 0 18px 45px rgb(15 23 42 / 10%);
+  --shadow-card: 0 2px 10px rgb(15 23 42 / 5%);
+  --shadow-lift: 0 12px 28px rgb(15 23 42 / 12%);
+  --radius-large: 18px;
+  --radius-medium: 14px;
+  --radius-small: 10px;
+  --size-touch: 44px;
+  /* 动效 token */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-normal: 220ms;
+  --dur-slow: 320ms;
+}
+
+/* 暗色：去饱和变体（非反色），对比度独立校准，满足 WCAG AA */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #0f1115;
+  --color-surface: #181b22;
+  --color-surface-muted: #20242d;
+  --color-border: #2c313c;
+  --color-border-strong: #3a6fb0;
+  --color-border-muted: #3a4150;
+  --color-text: #e7eaf0;
+  --color-text-muted: #9aa3b2;
+  --color-primary: #4d94ff;
+  --color-primary-strong: #6ba6ff;
+  --color-primary-soft: rgb(77 148 255 / 16%);
+  --color-warning: #fb923c;
+  --color-warning-soft: rgb(251 146 60 / 16%);
+  --color-success: #34d399;
+  --color-success-soft: rgb(52 211 153 / 16%);
+  --color-danger: #f87171;
+  --color-danger-soft: rgb(248 113 113 / 16%);
+  --color-on-primary: #0b1220;
+  --color-sheen: rgb(255 255 255 / 16%);
+  --shadow-soft: 0 18px 45px rgb(0 0 0 / 40%);
+  --shadow-card: 0 2px 10px rgb(0 0 0 / 24%);
+  --shadow-lift: 0 12px 28px rgb(0 0 0 / 45%);
+}

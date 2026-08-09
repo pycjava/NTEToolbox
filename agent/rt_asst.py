@@ -1,5 +1,6 @@
 import enum
 import itertools
+import os
 import re
 import struct
 import time
@@ -116,8 +117,8 @@ class Rt_asst_option:
     自动拾取: bool
     永远拾取: bool
     S级鱼截图: bool
-    S级鱼截图保存目录: str
-    S级鱼截图冷却时间: int
+    金色鱼截图: bool
+    鱼截图冷却时间: int
 
 
 def get_option(context: Context, argv: CustomAction.RunArg, /) -> Rt_asst_option:
@@ -141,17 +142,15 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Rt_asst_option
         if not isinstance(S级鱼截图, bool):
             raise TypeError("S级鱼截图 类型不是 bool")
 
-        S级鱼截图保存目录 = attach.get("S级鱼截图保存目录", "screenshots/s_fish")
-        if not isinstance(S级鱼截图保存目录, str):
-            raise TypeError("S级鱼截图保存目录 类型不是 str")
-        if not S级鱼截图保存目录:
-            raise ValueError("S级鱼截图保存目录 不能为空")
+        金色鱼截图 = attach.get("金色鱼截图", False)
+        if not isinstance(金色鱼截图, bool):
+            raise TypeError("金色鱼截图 类型不是 bool")
 
-        S级鱼截图冷却时间 = attach.get("S级鱼截图冷却时间", 5)
-        if not isinstance(S级鱼截图冷却时间, int):
-            raise TypeError("S级鱼截图冷却时间 类型不是 int")
-        if S级鱼截图冷却时间 < 0:
-            raise ValueError("S级鱼截图冷却时间 不能小于 0")
+        鱼截图冷却时间 = attach.get("鱼截图冷却时间", attach.get("S级鱼截图冷却时间", 5))
+        if not isinstance(鱼截图冷却时间, int):
+            raise TypeError("鱼截图冷却时间 类型不是 int")
+        if 鱼截图冷却时间 < 0:
+            raise ValueError("鱼截图冷却时间 不能小于 0")
     except Exception as e:
         log.error(f"选项初始化错误: {e} {e!r}\n{traceback.format_exc()}")
         raise
@@ -160,8 +159,8 @@ def get_option(context: Context, argv: CustomAction.RunArg, /) -> Rt_asst_option
         自动拾取=自动拾取,
         永远拾取=永远拾取,
         S级鱼截图=S级鱼截图,
-        S级鱼截图保存目录=S级鱼截图保存目录,
-        S级鱼截图冷却时间=S级鱼截图冷却时间,
+        金色鱼截图=金色鱼截图,
+        鱼截图冷却时间=鱼截图冷却时间,
     )
 
 
@@ -283,43 +282,45 @@ def pick_with_wheel(hwnd: int, /):
 拾取轮间间隔: Final[float] = 0.15  # 过小会无法拾取
 
 
-S_RANK_GOLDEN_BG_ROI: Final = [413, 120, 414, 414]
+S_RANK_GOLDEN_BG_ROI: Final = [480, 200, 280, 280]
 S_RANK_ICON_ROI: Final = [660, 190, 140, 130]
 S_RANK_ICON_TEMPLATE: Final = "fish/s_rank_icon.png"
+FISH_SCREENSHOT_ROOT_ENV: Final = "NTE_TOOLBOX_INSTALL_ROOT"
 
 
 @dataclass(kw_only=True, slots=True)
-class SRankFishScreenshotState:
+class FishScreenshotState:
     last_save_time: float = float("-inf")
 
 
-def reco_s_rank_golden_fish(context: Context, img: Img, /) -> bool:
+def reco_golden_fish(context: Context, img: Img, /) -> bool:
     golden_bg_reco_detail = context.run_recognition(
-        reco_s_rank_golden_fish.__name__ + "_golden_bg",
+        reco_golden_fish.__name__,
         img,
         pipeline_override={
-            reco_s_rank_golden_fish.__name__ + "_golden_bg": {
+            reco_golden_fish.__name__: {
                 "recognition": {
                     "type": "ColorMatch",
                     "param": {
                         "roi": S_RANK_GOLDEN_BG_ROI,
                         "method": 4,
                         "lower": [210, 105, 0],
-                        "upper": [255, 230, 105],
-                        "count": 1200,
+                        "upper": [255, 225, 80],
+                        "count": 3500,
                     },
                 },
             }
         },
     )
-    if golden_bg_reco_detail is None or golden_bg_reco_detail.box is None:
-        return False
+    return not (golden_bg_reco_detail is None or golden_bg_reco_detail.box is None)
 
+
+def reco_s_rank_fish(context: Context, img: Img, /) -> bool:
     s_icon_reco_detail = context.run_recognition(
-        reco_s_rank_golden_fish.__name__ + "_s_icon",
+        reco_s_rank_fish.__name__,
         img,
         pipeline_override={
-            reco_s_rank_golden_fish.__name__ + "_s_icon": {
+            reco_s_rank_fish.__name__: {
                 "recognition": {
                     "type": "FeatureMatch",
                     "param": {
@@ -335,11 +336,12 @@ def reco_s_rank_golden_fish(context: Context, img: Img, /) -> bool:
     return not (s_icon_reco_detail is None or s_icon_reco_detail.box is None)
 
 
-def get_s_rank_fish_screenshot_path(save_dir: str, now: float, /) -> Path:
+def get_fish_screenshot_path(now: float, /) -> Path:
     timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
     millis = int(now * 1000) % 1000
     safe_timestamp = re.sub(r"[^0-9_]", "", f"{timestamp}_{millis:03d}")
-    return Path(save_dir, f"s_fish_{safe_timestamp}.png")
+    save_root = os.getenv(FISH_SCREENSHOT_ROOT_ENV) or Path(os.getcwd(), "fish")
+    return Path(save_root, f"fish_{safe_timestamp}.png")
 
 
 def save_img(img: Img, path: Path, /) -> bool:
@@ -350,6 +352,10 @@ def save_img(img: Img, path: Path, /) -> bool:
     if color_type is None:
         log.error(f"不支持的截图通道数: {channel_num}")
         return False
+
+    # BGR → RGB：MaaFramework 截图为 BGR 顺序，PNG 要求 RGB
+    if channel_num == 3:
+        img = img[..., ::-1].copy()
 
     def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
         return (
@@ -374,29 +380,32 @@ def save_img(img: Img, path: Path, /) -> bool:
     return True
 
 
-def try_save_s_rank_fish_screenshot(
+def try_save_fish_screenshot(
     context: Context,
     img: Img,
     option: Rt_asst_option,
-    state: SRankFishScreenshotState,
+    state: FishScreenshotState,
     /,
 ) -> bool:
-    if not option.S级鱼截图:
-        return False
-    if not reco_s_rank_golden_fish(context, img):
+    need_save = False
+    if option.S级鱼截图 and reco_s_rank_fish(context, img):
+        need_save = True
+    if option.金色鱼截图 and reco_golden_fish(context, img):
+        need_save = True
+    if not need_save:
         return False
 
     now = time.time()
-    if now - state.last_save_time < option.S级鱼截图冷却时间:
+    if now - state.last_save_time < option.鱼截图冷却时间:
         return False
 
-    save_path = get_s_rank_fish_screenshot_path(option.S级鱼截图保存目录, now)
+    save_path = get_fish_screenshot_path(now)
     if not save_img(img, save_path):
-        log.error(f"S级鱼截图保存失败: {save_path}")
+        log.error(f"鱼截图保存失败: {save_path}")
         return False
 
     state.last_save_time = now
-    log.info(f"已保存 S级鱼截图: {save_path}")
+    log.info(f"已保存鱼截图: {save_path}")
     return True
 
 
@@ -445,7 +454,7 @@ class 实时辅助(CustomAction):
             return False
 
         _t_loop = time.time()
-        s_rank_fish_screenshot_state = SRankFishScreenshotState()
+        fish_screenshot_state = FishScreenshotState()
 
         with suppress(Manual_stop):
             while not context.tasker.stopping:
@@ -458,17 +467,17 @@ class 实时辅助(CustomAction):
                     time.sleep(拾取轮间间隔)
                     continue
 
-                if option.自动拾取 or option.S级鱼截图:
+                if option.自动拾取 or option.S级鱼截图 or option.金色鱼截图:
                     # 以下需要 API
                     controller: Controller = context.tasker.controller
                     img: Img = get_img(controller)
 
-                    # S级鱼截图
-                    try_save_s_rank_fish_screenshot(
+                    # 鱼截图
+                    try_save_fish_screenshot(
                         context,
                         img,
                         option,
-                        s_rank_fish_screenshot_state,
+                        fish_screenshot_state,
                     )
 
                     # 自动拾取

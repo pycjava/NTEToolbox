@@ -5,6 +5,7 @@ docs/.vuepress/.temp
 *.d
 .claude
 MFA
+.playwright-cli
 
 # Compiled Object files
 build
@@ -366,6 +367,7 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Cake - Uncomment if you are using it
 # tools/**
@@ -449,6 +451,7 @@ deps/tools/*
 build
 install
 dist
+dist-tauri
 
 # Tools
 tools/ImageCropper/**/*.png
