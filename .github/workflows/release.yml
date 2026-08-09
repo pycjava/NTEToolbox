@@ -1,0 +1,290 @@
+name: release
+
+env:
+  MAAFW_VERSION: ""
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: set_tag
+        run: |
+          is_release=${{ startsWith(github.ref, 'refs/tags/v') }}
+          tag=$(git describe --tags --match "v*" ${{ github.ref }} || true)
+          if [[ $tag != v* ]]; then
+            tag=$(curl -sX GET "https://api.github.com/repos/${{ github.repository }}/releases/latest" --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | awk '/tag_name/{print $4}' FS='["]')
+            if [[ $tag != v* ]]; then
+              tag="v0.0.0"
+            fi
+            tag=$(date "+$tag-%y%m%d-$(git rev-parse --short HEAD)")
+          fi
+
+          if ! $($is_release) ; then
+            prefix=${tag%-*-*}
+            suffix=${tag#$prefix-}
+            tag="$prefix-ci.$suffix"
+          fi
+
+          is_prerelease=false
+          if [[ $tag =~ .*alpha.* || $tag =~ .*beta.* || $tag =~ .*rc.* || $tag =~ .*dev.* || $tag =~ .*-ci.* ]]; then
+            is_prerelease=true
+          fi
+
+          echo tag=$tag | tee -a $GITHUB_OUTPUT
+          echo is_release=$is_release | tee -a $GITHUB_OUTPUT
+          echo is_prerelease=$is_prerelease | tee -a $GITHUB_OUTPUT
+    outputs:
+      tag: ${{ steps.set_tag.outputs.tag }}
+      is_release: ${{ steps.set_tag.outputs.is_release }}
+      is_prerelease: ${{ steps.set_tag.outputs.is_prerelease }}
+
+  build-agent-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Build agent.exe
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+          python tools/build_agent.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: internal-agent-win-x86_64
+          path: dist/agent.exe
+
+  build-client-windows:
+    needs: meta
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Rust GNU toolchain
+        shell: pwsh
+        run: |
+          rustup default stable-x86_64-pc-windows-gnu
+
+      - name: Install WinLibs MinGW (POSIX UCRT)
+        shell: pwsh
+        run: |
+          $tag = "16.1.0posix-14.0.0-ucrt-r4"
+          $asset = "winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip"
+          Invoke-WebRequest -Uri "https://github.com/brechtsanders/winlibs_mingw/releases/download/$tag/$asset" -OutFile "$env:TEMP\winlibs.zip"
+          Expand-Archive -Path "$env:TEMP\winlibs.zip" -DestinationPath "$env:TEMP\winlibs" -Force
+          $root = Get-ChildItem "$env:TEMP\winlibs" -Directory | Select-Object -First 1
+          Copy-Item -Recurse -Force "$($root.FullName)\*" "C:\mingw64\"
+          & "C:\mingw64\bin\gcc.exe" --version | Select-Object -First 1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Download MaaFramework
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          fileName: "MAA-win-x86_64*"
+          latest: ${{ env.MAAFW_VERSION == '' }}
+          tag: ${{ env.MAAFW_VERSION }}
+          out-file-path: "deps"
+          extract: true
+
+      - name: Prepare OCR models
+        run: |
+          python tools/configure.py
+
+      - name: Build NTEToolbox client (Tauri)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\mingw64\bin;$env:PATH"
+          .\tools\build_tauri.ps1
+
+      - name: Prepare release artifacts
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.meta.outputs.tag }}"
+          $out = "release-assets"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $setup = Get-ChildItem "dist-tauri" -Filter "*-setup.exe" | Select-Object -First 1
+          if ($setup) {
+            Copy-Item $setup.FullName "$out\NTEToolbox-$tag-win64-setup.exe"
+          }
+          # 便携版：exe + WebView2Loader.dll
+          $portable = "$out\NTEToolbox-$tag-win64-portable"
+          New-Item -ItemType Directory -Force -Path $portable | Out-Null
+          Copy-Item "dist-tauri\NTEToolbox.exe" $portable
+          if (Test-Path "dist-tauri\WebView2Loader.dll") {
+            Copy-Item "dist-tauri\WebView2Loader.dll" $portable
+          }
+          Compress-Archive -Path $portable -DestinationPath "$out\NTEToolbox-$tag-win64-portable.zip" -Force
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: NTEToolbox-client-win-x86_64
+          path: release-assets
+
+  build-hscoach-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Build standalone HsCoach
+        shell: pwsh
+        run: |
+          .\tools\build_hscoach.ps1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: NTEToolbox-HsCoach-win-x86_64
+          path: dist/HsCoach-*-win64.zip
+
+  headless:
+    needs: [meta, build-agent-windows]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [win, macos, linux, android]
+        arch: [aarch64, x86_64]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Download Windows agent.exe
+        if: matrix.os == 'win' && matrix.arch == 'x86_64'
+        uses: actions/download-artifact@v8
+        with:
+          name: internal-agent-win-x86_64
+          path: dist
+
+      - name: Download MaaFramework
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          fileName: "MAA-${{ matrix.os }}-${{ matrix.arch }}*"
+          latest: ${{ env.MAAFW_VERSION == '' }}
+          tag: ${{ env.MAAFW_VERSION }}
+          out-file-path: "deps"
+          extract: true
+
+      - name: Prepare OCR models
+        run: |
+          python tools/configure.py
+
+      - name: Assemble headless bundle
+        run: |
+          python tools/build_headless.py --version "${{ needs.meta.outputs.tag }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}"
+
+      - name: Package artifact
+        id: package
+        shell: bash
+        run: |
+          ARTIFACT_NAME="NTEToolbox-headless-${{ matrix.os }}-${{ matrix.arch }}"
+          if [[ "${{ matrix.os }}" == "win" ]] || [[ "${{ matrix.os }}" == "macos" ]]; then
+            7z a -t7z -mx=9 -m0=lzma2 -mfb=273 "${ARTIFACT_NAME}.7z" ./install/*
+            echo "artifact_path=${ARTIFACT_NAME}.7z" >> $GITHUB_OUTPUT
+          else
+            echo "artifact_path=install" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.artifact_path }}
+          path: ${{ steps.package.outputs.artifact_path }}
+
+  changelog:
+    name: Generate changelog
+    needs: meta
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.git-cliff.outputs.content }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: .github/cliff.toml
+          args: >-
+            -vv --latest --strip header ${{ needs.meta.outputs.is_prerelease ==
+            'false' && '--tag-pattern "^v[0-9]+\\.[0-9]+\\.[0-9]+$"' || '' }}
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+
+  release:
+    if: ${{ needs.meta.outputs.is_release == 'true' }}
+    needs: [meta, build-client-windows, build-hscoach-windows, headless, changelog]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: NTEToolbox-*
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p release_assets
+          cd artifacts
+          for d in */; do
+            base="${d%/}"
+            if [ -f "$base"/*.7z ]; then
+              mv "$base"/*.7z "../release_assets/${base}-${{ needs.meta.outputs.tag }}.7z"
+            elif [ -f "$base"/*.zip ]; then
+              mv "$base"/*.zip "../release_assets/${base}-${{ needs.meta.outputs.tag }}.zip"
+            else
+              (cd "$base" && zip -r "../../release_assets/${base}-${{ needs.meta.outputs.tag }}.zip" .)
+            fi
+          done
+
+      - uses: softprops/action-gh-release@v2.2.2
+        with:
+          files: release_assets/*
+          tag_name: ${{ needs.meta.outputs.tag }}
+          body: ${{ needs.changelog.outputs.release_body }}
+          draft: false
+          prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
