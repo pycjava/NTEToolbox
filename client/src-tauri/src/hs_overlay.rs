@@ -20,13 +20,6 @@ const OVERLAY_OFFSET_TOP: i32 = 40;
 const FOLLOW_POLL_MS: u64 = 200;
 
 #[cfg(windows)]
-const GWL_EXSTYLE: i32 = -20;
-#[cfg(windows)]
-const WS_EX_LAYERED: isize = 0x00080000;
-#[cfg(windows)]
-const WS_EX_TRANSPARENT: isize = 0x00000020;
-
-#[cfg(windows)]
 #[repr(C)]
 struct Rect {
     left: i32,
@@ -38,8 +31,6 @@ struct Rect {
 #[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
-    fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
-    fn SetWindowLongPtrW(hwnd: isize, index: i32, new_long: isize) -> isize;
     fn GetWindowRect(hwnd: isize, rect: *mut Rect) -> i32;
 }
 
@@ -171,35 +162,18 @@ impl Drop for HsOverlayRuntime {
     }
 }
 
-/// 加点击穿透（WS_EX_LAYERED | WS_EX_TRANSPARENT），鼠标事件直达游戏窗口。
+/// 加点击穿透：用 tauri 官方的 set_ignore_cursor_events。
+///
+/// 不要手动 SetWindowLongPtrW 设 WS_EX_TRANSPARENT|WS_EX_LAYERED：
+/// tauri/tao 在 show() 等操作时会按 WindowFlags 全量重算窗口样式，
+/// 手动修改会被覆盖（实测 show 后 exstyle 从 0xc0138 回到 0x40118）。
+/// set_ignore_cursor_events 设置 IGNORE_CURSOR_EVENT flag，由 tao
+/// 统一管理（window_state 重算时自动带上 WS_EX_TRANSPARENT|WS_EX_LAYERED）。
 #[cfg(windows)]
 fn apply_click_through(window: &WebviewWindow) -> Result<(), String> {
-    let raw = window
-        .window_handle()
-        .map_err(|error| format!("Failed to get overlay window handle: {error}"))?;
-    let RawWindowHandle::Win32(handle) = raw.as_raw() else {
-        return Err("Overlay window is not a Win32 window".to_string());
-    };
-    let hwnd = handle.hwnd.get() as isize;
-
-    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
-    if style == 0 {
-        return Err(format!(
-            "GetWindowLongPtrW failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-
-    let new_style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT;
-    let result = unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style) };
-    if result == 0 {
-        return Err(format!(
-            "SetWindowLongPtrW failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    log::debug!("Overlay window click-through applied: hwnd={hwnd}");
-    Ok(())
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|error| format!("Failed to enable click-through: {error}"))
 }
 
 #[cfg(not(windows))]
@@ -233,3 +207,67 @@ fn get_window_rect(_hwnd: isize) -> Option<Rect> {
 
 #[cfg(not(windows))]
 struct Rect;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归测试：真实创建 overlay 窗口后，必须保持可见（"一闪而过"回归），
+    /// 且点击穿透样式（LAYERED|TRANSPARENT）已生效。
+    #[test]
+    fn overlay_window_stays_visible_with_click_through() {
+        let app = tauri::Builder::default()
+            .any_thread()
+            .build(tauri::generate_context!())
+            .expect("build app");
+        let handle = app.handle();
+        let mut overlay = HsOverlayRuntime::new();
+
+        overlay.show(&handle).expect("show overlay");
+
+        // 等窗口与 WebView 初始化
+        std::thread::sleep(Duration::from_millis(1_500));
+
+        let window = handle
+            .get_webview_window(OVERLAY_LABEL)
+            .expect("overlay window exists");
+        assert!(
+            window.is_visible().expect("visible check"),
+            "overlay window should be visible after show"
+        );
+
+        #[cfg(windows)]
+        {
+            use raw_window_handle::RawWindowHandle;
+            const GWL_EXSTYLE: i32 = -20;
+            const WS_EX_LAYERED: isize = 0x00080000;
+            const WS_EX_TRANSPARENT: isize = 0x00000020;
+            #[link(name = "user32")]
+            extern "system" {
+                fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+            }
+            let raw = window.window_handle().expect("hwnd");
+            let RawWindowHandle::Win32(h) = raw.as_raw() else {
+                panic!("overlay window is not a Win32 window");
+            };
+            let hwnd = h.hwnd.get() as isize;
+            let style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+            assert_ne!(style, 0, "GetWindowLongPtrW failed");
+            assert_ne!(style & WS_EX_LAYERED, 0, "window must be layered (transparent)");
+            assert_ne!(
+                style & WS_EX_TRANSPARENT,
+                0,
+                "window must be click-through"
+            );
+        }
+
+        // 再等 1 秒：窗口不得自动消失（用户报告"一闪而过"）
+        std::thread::sleep(Duration::from_millis(1_000));
+        assert!(
+            window.is_visible().expect("visible check 2"),
+            "overlay window must not vanish after showing"
+        );
+
+        overlay.hide(&handle);
+    }
+}

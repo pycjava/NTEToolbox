@@ -16,7 +16,7 @@ cd "$ROOT/client/src-tauri"
 export PATH="$HOME/.cargo/bin:$PATH"
 CMD=/c/Windows/System32/cmd.exe
 
-cargo test --release --lib --no-run "$@" > /dev/null 2>&1
+cargo test --release --lib --no-run > /dev/null 2>&1
 # 只匹配 16 位 hash 的测试 exe（排除任何带额外后缀的副本），用绝对路径
 EXE=$(ls -t "$(pwd)"/target/release/deps/ntetoolbox_client_lib-????????????????.exe | head -1)
 python "$ROOT/tools/patch_test_manifest.py" "$EXE"
