@@ -426,6 +426,7 @@ function App() {
               game={selectedGame}
               onTargetWindowChange={handleTargetWindowChange}
               onRefreshWindows={handleRefreshWindows}
+              onError={(message) => pushToast("error", message)}
             />
           ) : (
             <>

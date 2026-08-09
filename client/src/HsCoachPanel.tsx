@@ -98,9 +98,10 @@ type HsCoachPanelProps = {
   game: GameDefinition;
   onTargetWindowChange: (gameId: string, targetWindow: string) => void;
   onRefreshWindows: (gameId: string) => void;
+  onError: (message: string) => void;
 };
 
-export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWindows }: HsCoachPanelProps) {
+export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWindows, onError }: HsCoachPanelProps) {
   const [snapshot, setSnapshot] = useState<HsStateSnapshot | null>(null);
   const [config, setConfig] = useState<HsCoachConfig | null>(null);
   const [configDraft, setConfigDraft] = useState<HsCoachConfig | null>(null);
@@ -171,6 +172,7 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
         await invoke("stop_hscoach");
       } catch (error) {
         console.error("Failed to stop hscoach", error);
+        onError("结束教练失败：请检查任务管理器中的 hscoachd 进程后重试");
       }
     }
   }

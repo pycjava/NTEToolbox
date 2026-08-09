@@ -20,6 +20,7 @@ from hscoach.config import effective_config, save_config
 from hscoach.log_config import ensure_log_config, power_log_path, tail_power_log
 from hscoach.log_parser import parse_power_log, parse_power_log_file
 from hscoach.overlay import OverlayApp
+from hscoach.single_instance import SingleInstanceLock
 from hscoach.state import detect_friendly_player_id, serialize_game
 from hscoach.trigger import (
     IncrementalTurnDetector,
@@ -163,6 +164,26 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         logger.warning("配置保存失败（不影响本次运行）：%s", e)
 
+    # 发布目录
+    publish_dir = Path(args.publish_dir) if args.publish_dir else Path(tempfile.gettempdir()) / "hs-coach"
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("建议发布到：%s", publish_dir / "advice.json")
+
+    # 单实例锁：已有存活实例则拒绝启动（防双实例抢 Power.log；
+    # 残留实例的锁文件会在 PID 已死时被自动接管）
+    lock = SingleInstanceLock(publish_dir)
+    ok, lock_message = lock.acquire()
+    if not ok:
+        print(f"错误：{lock_message}", file=sys.stderr)
+        return 3
+    try:
+        return _run(args, cfg, publish_dir)
+    finally:
+        lock.release()
+
+
+def _run(args, cfg, publish_dir: Path) -> int:
+    """监听主循环（已在单实例锁保护下执行）。"""
     # 1. 确保 log.config 已开启
     status = ensure_log_config()
     logger.info("log.config: %s — %s", status.action, status.message)
@@ -178,11 +199,6 @@ def main(argv: list[str] | None = None) -> int:
         DeepSeekClient(api_key=cfg.api_key, model=cfg.model, base_url=cfg.base_url)
     )
 
-    # 4. 发布目录
-    publish_dir = Path(args.publish_dir) if args.publish_dir else Path(tempfile.gettempdir()) / "hs-coach"
-    publish_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("建议发布到：%s", publish_dir / "advice.json")
-
     power_log = power_log_path()
     # friendly id 未知时先用占位 1，第一次解析后自动校准（D9 防线：
     # 校准前若映射错误，serialize_game 的 D9 断言会拒绝输出并告警）
@@ -193,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     trigger = TurnTrigger(friendly_player_id=friendly_player_id)
     detector = IncrementalTurnDetector(friendly_player_id=friendly_player_id)
 
-    # 5. 后台线程：增量 tail → 正则检测回合 → 全量解析 → 校准 → LLM（优化 2+3）
+    # 4. 后台线程：增量 tail → 正则检测回合 → 全量解析 → 校准 → LLM（优化 2+3）
     stop_event = threading.Event()
 
     def apply_calibration(result) -> None:
@@ -268,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     worker = threading.Thread(target=log_worker, daemon=True)
     worker.start()
 
-    # 6. 前台：启动 overlay（或终端模式）
+    # 5. 前台：启动 overlay（或终端模式）
     if args.no_overlay:
         print("终端模式：监听中，按 Ctrl+C 退出。建议发布在", publish_dir)
         try:
@@ -335,4 +351,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -167,7 +167,7 @@ pub struct HsCoachRuntime {
 }
 
 impl HsCoachRuntime {
-    pub fn start(&mut self, app: &AppHandle) -> Result<(), String> {
+    pub fn start<R: Runtime>(&mut self, app: &AppHandle<R>) -> Result<(), String> {
         if self.child.is_some() {
             log::info!("hscoachd already running, start request ignored");
             return Ok(());
@@ -222,7 +222,10 @@ impl HsCoachRuntime {
         }
     }
 
-    pub fn poll_state(&mut self, app: &AppHandle) -> Result<HsCoachStateSnapshot, String> {
+    pub fn poll_state<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+    ) -> Result<HsCoachStateSnapshot, String> {
         let mut run_state = "idle".to_string();
         let mut exit_code = None;
 
@@ -256,7 +259,7 @@ impl HsCoachRuntime {
         })
     }
 
-    fn ensure_publish_dir(&mut self, app: &AppHandle) -> Result<PathBuf, String> {
+    fn ensure_publish_dir<R: Runtime>(&mut self, app: &AppHandle<R>) -> Result<PathBuf, String> {
         if let Some(publish_dir) = &self.publish_dir {
             return Ok(publish_dir.clone());
         }
@@ -363,7 +366,7 @@ pub fn default_config_path() -> Result<PathBuf, String> {
 }
 
 /// 解析 hscoachd 启动方式：打包资源里的 exe，或开发环境的 `python -m hscoach`。
-fn hscoachd_command(app: &AppHandle, extra_args: &[&str]) -> Result<Command, String> {
+fn hscoachd_command<R: Runtime>(app: &AppHandle<R>, extra_args: &[&str]) -> Result<Command, String> {
     let mut candidates = Vec::new();
 
     if let Ok(exe_path) = std::env::current_exe() {
@@ -475,5 +478,30 @@ mod tests {
         assert_eq!(parsed.model, DEFAULT_MODEL);
         assert_eq!(parsed.base_url, DEFAULT_BASE_URL);
         assert!(parsed.api_key.is_empty());
+    }
+
+    /// 回归测试：真实 spawn hscoachd（python -m hscoach 或打包 exe）→ stop，
+    /// 验证进程树被终止、状态回到 idle。覆盖 TerminateJobObject + taskkill 兜底路径。
+    #[test]
+    fn start_then_stop_terminates_hscoachd_process_tree() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .expect("mock app");
+        let handle = app.handle();
+
+        let mut runtime = HsCoachRuntime::default();
+        runtime.start(&handle).expect("start hscoachd");
+
+        let state = runtime.poll_state(&handle).expect("poll after start");
+        assert_eq!(state.run_state, "running", "hscoachd should be running after start");
+
+        runtime.stop().expect("stop hscoachd");
+
+        let state = runtime.poll_state(&handle).expect("poll after stop");
+        assert_eq!(
+            state.run_state,
+            "idle",
+            "hscoachd should be idle after stop (process tree terminated)"
+        );
     }
 }
