@@ -24,7 +24,9 @@ NTEToolbox/
 │   ├── build_tauri.ps1 #   Tauri 一键构建（6 步）
 │   ├── build_all.ps1   #   全量构建编排
 │   ├── build_agent.py  #   PyInstaller 打包 Python agent
-│   └── configure.py    #   OCR 模型准备
+│   ├── configure.py    #   OCR 模型准备
+│   ├── run_rust_tests.sh        #   sandbox 专用 cargo test wrapper（真机/CI 不需要）
+│   └── patch_test_manifest.py   #   sandbox 专用：Rust 测试 exe 注入 comctl32 v6 manifest
 ├── pyproject.toml      # Python 包 ntetoolbox，Python >=3.14
 └── package.json        # 根 pnpm workspace
 ```
