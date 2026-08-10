@@ -191,11 +191,16 @@ def restore_log_config() -> LogConfigStatus:
     )
 
 
-def tail_power_log(poll_interval: float = 0.5):
+def tail_power_log(poll_interval: float = 0.5, path_provider=None):
     """生成器：持续 tail Power.log，yield 新增的行。
 
     文件不存在时等待其出现（炉石首次写日志会创建）。
     用于实时监听对局。
+
+    Args:
+        poll_interval: 轮询间隔（秒）
+        path_provider: 返回 Power.log 路径的可调用对象（默认 power_log_path；
+            测试注入用，避免 mock patch 在并发线程间互相踩踏）
 
     健壮性（踩坑修复）：
     - 国服每次启动炉石会新建 Logs/<时间戳>/Power.log：每次轮询重新解析
@@ -211,14 +216,19 @@ def tail_power_log(poll_interval: float = 0.5):
     """
     fp = None
     open_path: Path | None = None
-    just_appeared = True
+    # 启动时文件已存在 → 从末尾 tail（不重放启动前的历史对局：历史回合
+    # 逐个触发 LLM 会阻塞 worker，实时建议/快照滞后——用户实测回归）。
+    # 仅当文件"首次出现"（启动时不存在，炉石在监听后才启动）或路径
+    # 变化/轮换时从头读（下方分支显式置 True / seek(0)）。
+    just_appeared = False
     last_ctime: float | None = None
     last_size: int = 0
 
     try:
         while True:
             # 每次重解析路径：国服每次启动新建时间戳子目录，重启后要能发现
-            path = power_log_path()
+            resolve_path = path_provider or power_log_path
+            path = resolve_path()
             if fp is not None and open_path != path:
                 logger.info("Power.log 路径变化：%s → %s", open_path, path)
                 fp.close()
