@@ -64,13 +64,23 @@ export type FeatureDefinition = {
 };
 
 export type WindowInfo = {
-  /** 窗口句柄（十进制字符串） */
-  hwnd: string;
-  /** 窗口标题 */
-  title: string;
-  /** 窗口类名 */
-  className: string;
+   /** 窗口句柄（十进制字符串） */
+   hwnd: string;
+   /** 窗口标题 */
+   title: string;
+   /** 窗口类名 */
+   className: string;
 };
+
+/**
+ * 判定一个窗口是否为炉石传说窗口（标题含「炉石」或「Hearthstone」）。
+ *
+ * 集中判定规则，避免生产与测试各写一份正则导致漂移。
+ * 刻意只看标题（不看 className）：国服/国际服标题稳定，类名可能随版本变。
+ */
+export function isHearthstoneWindow(win: WindowInfo): boolean {
+  return /炉石|Hearthstone/i.test(win.title);
+}
 
 export type ControllerState = {
   /** 控制器类型，如 "Win PostMessageWithWindowPos" */

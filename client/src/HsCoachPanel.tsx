@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Eye,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import type { GameDefinition, WindowInfo } from "./clientModel";
+import { isHearthstoneWindow } from "./clientModel";
 
 // ── 与 Rust 侧契约对应的类型 ─────────────────────────────────────────
 
@@ -230,7 +231,7 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
     }
   }
 
-  function handleRefreshWindows() {
+  const handleRefreshWindows = useCallback(() => {
     invoke<WindowInfo[]>("enumerate_windows")
       .then((result) => {
         setWindows(result ?? []);
@@ -241,14 +242,12 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
         setWindowsLoaded(true);
       });
     onRefreshWindows(game.id);
-  }
+  }, [game.id, onRefreshWindows]);
 
   // 挂载即枚举一次窗口列表：跟随窗口下拉不依赖用户手动点刷新
   useEffect(() => {
     handleRefreshWindows();
-    // 仅挂载时执行一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleRefreshWindows]);
 
   const advice = snapshot?.advice?.advice;
   const gameState = snapshot?.gameState;
@@ -259,8 +258,8 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
     ? players[String(friendlyId === 1 ? 2 : 1)]
     : undefined;
 
-  // 枚举完成且列表里没有炉石类窗口（标题含「炉石」/「Hearthstone」）时给出指引
-  const hasHearthstoneWindow = windows.some((win) => /炉石|Hearthstone/i.test(win.title));
+  // 枚举完成且列表里没有炉石类窗口时给出指引（判定规则见 isHearthstoneWindow）
+  const hasHearthstoneWindow = windows.some(isHearthstoneWindow);
   const showWindowHint = windowsLoaded && !hasHearthstoneWindow;
 
   return (
