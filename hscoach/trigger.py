@@ -99,6 +99,8 @@ class TurnTrigger:
     ) -> Advice | None:
         """检查并可能触发：序列化 → 检测新回合 → 生成建议 → 发布。
 
+        同步阻塞实现（兼容既有调用与 manual_trigger）。
+
         Returns: 若触发了建议返回 Advice，否则 None。
         """
         snapshot = serialize_game(game, self.friendly_player_id, db)
@@ -107,9 +109,32 @@ class TurnTrigger:
             return None
 
         self.last_triggered_turn = new_turn
-        advice = get_advice(snapshot, client, self.friendly_player_id, fallback=self.last_advice)
+        advice = self.generate_and_publish(
+            snapshot, new_turn, self.last_advice, client, publish_dir
+        )
+        return advice
+
+    def generate_and_publish(
+        self,
+        snapshot: GameSnapshot,
+        turn: int,
+        fallback: Advice | None,
+        client: LLMClient,
+        publish_dir: Path,
+    ) -> Advice:
+        """生成建议并发布（含 LLM 调用 + 更新 last_advice）。
+
+        从 check_and_trigger 拆出的"慢路径"后半段，供 AdviceDispatcher
+        的 worker 线程调用：调用方已在 log_worker 完成 turn 检测与
+        last_triggered_turn 更新，此方法只负责 LLM + 发布 + 记 fallback。
+
+        worker 线程独占调用，故 last_advice 的读写在此处无需加锁。
+        """
+        advice = get_advice(
+            snapshot, client, self.friendly_player_id, fallback=fallback
+        )
         self.last_advice = advice
-        publish_advice(publish_dir, advice, new_turn)
+        publish_advice(publish_dir, advice, turn)
         return advice
 
     def manual_trigger(

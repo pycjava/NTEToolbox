@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 
+from hscoach.advice_worker import AdviceDispatcher, AdviceJob
 from hscoach.cards import CardDatabase
 from hscoach.coach import DeepSeekClient
 from hscoach.config import effective_config, save_config
@@ -229,6 +230,33 @@ def _run(args, cfg, publish_dir: Path) -> int:
             trigger.friendly_player_id = calibrated
             detector.friendly_player_id = calibrated
 
+    # LLM 建议调度器：把"调 LLM → 发布 advice.json"这条慢路径从 log_worker
+    # 剥离到独立线程，避免 LLM 慢（超时 120s）反噬日志读取与记牌器快照。
+    # latest-wins：新回合到达时丢弃尚未启动的旧 pending，不堆积过时请求。
+    advice_dispatcher = AdviceDispatcher()
+
+    def advice_handler(job: AdviceJob) -> None:
+        """worker 线程：调 LLM + 发布 + 更新 last_advice（含异常兜底）。
+
+        job.snapshot 是 submit 时已序列化的不可变快照，无需再碰 hslog game
+        对象，跨线程安全。失败由 get_advice 内部降级为兜底建议（degraded）。
+        """
+        try:
+            advice = trigger.generate_and_publish(
+                job.snapshot, job.turn, job.fallback, client_holder, publish_dir
+            )
+            logger.info("回合建议已发布（T%d）：%s", job.turn, advice.headline)
+        except Exception as e:  # 发布失败不致命（handler 抛错 dispatcher 会吞）
+            logger.warning("回合建议发布失败（T%d）：%s", job.turn, e)
+
+    advice_worker = threading.Thread(
+        target=advice_dispatcher.run_loop,
+        args=(advice_handler, stop_event),
+        daemon=True,
+        name="hscoach-advice-worker",
+    )
+    advice_worker.start()
+
     def log_worker():
         logger.info("开始监听 %s（打开炉石打一局即开始）...", power_log)
         batch: list[str] = []
@@ -247,20 +275,26 @@ def _run(args, cfg, publish_dir: Path) -> int:
                 batch.clear()
                 for turn in triggered_turns:
                     # 检测到"轮到友方新回合" → 按触发点截取行流全量解析
-                    # → 校准 → LLM（回合开始即触发，快照正好在回合起点）
+                    # → 校准 → 序列化快照 → submit 给调度器（不在此阻塞调 LLM）
                     try:
                         result = parse_power_log(detector.get_trigger_window(turn))
                         apply_calibration(result)
                         if result.games:
                             game = result.games[-1]
-                            advice = trigger.check_and_trigger(
-                                game, db, client_holder, publish_dir
+                            # 序列化 + 检测新回合在 log_worker 完成（轻量），
+                            # LLM 调用交给 advice worker，避免慢 LLM 反噬日志读取。
+                            snapshot = serialize_game(
+                                game, trigger.friendly_player_id, db
                             )
-                            if advice is not None:
-                                logger.info(
-                                    "回合建议已发布（T%d）：%s",
-                                    trigger.last_triggered_turn,
-                                    advice.headline,
+                            new_turn = trigger.detect_new_friendly_turn(snapshot)
+                            if new_turn is not None:
+                                trigger.last_triggered_turn = new_turn
+                                advice_dispatcher.submit(
+                                    AdviceJob(
+                                        snapshot=snapshot,
+                                        turn=new_turn,
+                                        fallback=trigger.last_advice,
+                                    )
                                 )
                     except Exception as e:  # 处理日志出错不致命
                         logger.warning("处理日志出错：%s", e)
@@ -304,14 +338,23 @@ def _run(args, cfg, publish_dir: Path) -> int:
                     apply_calibration(result)
                     if result.games:
                         game = result.games[-1]
+                        snapshot = serialize_game(
+                            game, trigger.friendly_player_id, db
+                        )
                         # 盒子同步刷新：手动触发也发布一版最新快照
                         publish_game_state(
-                            publish_dir,
-                            serialize_game(game, trigger.friendly_player_id, db),
-                            trigger.friendly_player_id,
+                            publish_dir, snapshot, trigger.friendly_player_id
                         )
-                        advice = trigger.manual_trigger(game, db, client_holder, publish_dir)
-                        logger.info("手动建议：%s", advice.headline)
+                        # 手动建议走调度器（与自动触发统一，避免和 advice
+                        # worker 抢 last_advice；latest-wins 覆盖 pending）。
+                        advice_dispatcher.submit(
+                            AdviceJob(
+                                snapshot=snapshot,
+                                turn=snapshot.turn,
+                                fallback=trigger.last_advice,
+                            )
+                        )
+                        logger.info("手动建议已排队（T%d）", snapshot.turn)
                 except Exception as e:  # 手动触发出错不致命
                     logger.warning("手动触发出错：%s", e)
 
