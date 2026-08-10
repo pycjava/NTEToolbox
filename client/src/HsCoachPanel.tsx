@@ -111,6 +111,8 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
   const [overlayVisible, setOverlayVisible] = useState(false);
   const [overlayBusy, setOverlayBusy] = useState(false);
   const [windows, setWindows] = useState<WindowInfo[]>(game.controller?.availableWindows ?? []);
+  // 首次枚举完成前不显示「未检测到炉石窗口」提示（避免打开面板时闪一下）
+  const [windowsLoaded, setWindowsLoaded] = useState(false);
 
   // 读取共享配置（与独立版 HsCoach 同一份 config.json）
   useEffect(() => {
@@ -230,10 +232,23 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
 
   function handleRefreshWindows() {
     invoke<WindowInfo[]>("enumerate_windows")
-      .then((result) => setWindows(result ?? []))
-      .catch((error) => console.error("Failed to enumerate windows", error));
+      .then((result) => {
+        setWindows(result ?? []);
+        setWindowsLoaded(true);
+      })
+      .catch((error) => {
+        console.error("Failed to enumerate windows", error);
+        setWindowsLoaded(true);
+      });
     onRefreshWindows(game.id);
   }
+
+  // 挂载即枚举一次窗口列表：跟随窗口下拉不依赖用户手动点刷新
+  useEffect(() => {
+    handleRefreshWindows();
+    // 仅挂载时执行一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const advice = snapshot?.advice?.advice;
   const gameState = snapshot?.gameState;
@@ -243,6 +258,10 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
   const opponentPlayer = friendlyId != null
     ? players[String(friendlyId === 1 ? 2 : 1)]
     : undefined;
+
+  // 枚举完成且列表里没有炉石类窗口（标题含「炉石」/「Hearthstone」）时给出指引
+  const hasHearthstoneWindow = windows.some((win) => /炉石|Hearthstone/i.test(win.title));
+  const showWindowHint = windowsLoaded && !hasHearthstoneWindow;
 
   return (
     <div className="hs-panel">
@@ -364,6 +383,11 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
             <RefreshCw size={18} />
           </button>
         </div>
+        {showWindowHint ? (
+          <p className="hs-log-message">
+            未检测到炉石窗口：请确认炉石已启动并处于窗口化/无边框模式后点刷新；若仍不出现，请以管理员身份运行本工具箱后重试。
+          </p>
+        ) : null}
         <div className="hs-actions">
           {overlayVisible ? (
             <button className="secondary-action danger" type="button" disabled={overlayBusy} onClick={() => { void handleHideOverlay(); }}>

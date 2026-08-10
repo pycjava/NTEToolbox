@@ -130,3 +130,53 @@ describe("HsCoachPanel run controls", () => {
     expect(screen.getByRole("button", { name: /启动教练/ })).toBeTruthy();
   });
 });
+
+describe("HsCoachPanel follow-window dropdown", () => {
+  it("auto-enumerates windows on mount and populates the dropdown", async () => {
+    mockBaseline({
+      poll_hscoach_state: () => IDLE_SNAPSHOT,
+      enumerate_windows: () => [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" },
+        { hwnd: "1234", title: "微信", className: "WeChatMainWndForPC" }
+      ]
+    });
+
+    render(<HsCoachPanel game={HS_GAME} onTargetWindowChange={() => {}} onRefreshWindows={() => {}} onError={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "炉石传说 (UnityWndClass)" })).toBeTruthy();
+    }, { timeout: 3000 });
+    expect(invokeMock).toHaveBeenCalledWith("enumerate_windows");
+  });
+
+  it("shows a hint when no Hearthstone-like window is enumerated", async () => {
+    mockBaseline({
+      poll_hscoach_state: () => IDLE_SNAPSHOT,
+      enumerate_windows: () => [
+        { hwnd: "1234", title: "微信", className: "WeChatMainWndForPC" }
+      ]
+    });
+
+    render(<HsCoachPanel game={HS_GAME} onTargetWindowChange={() => {}} onRefreshWindows={() => {}} onError={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/未检测到炉石窗口/)).toBeTruthy();
+    }, { timeout: 3000 });
+  });
+
+  it("does not show the hint when a Hearthstone window is listed", async () => {
+    mockBaseline({
+      poll_hscoach_state: () => IDLE_SNAPSHOT,
+      enumerate_windows: () => [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" }
+      ]
+    });
+
+    render(<HsCoachPanel game={HS_GAME} onTargetWindowChange={() => {}} onRefreshWindows={() => {}} onError={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "炉石传说 (UnityWndClass)" })).toBeTruthy();
+    }, { timeout: 3000 });
+    expect(screen.queryByText(/未检测到炉石窗口/)).toBeNull();
+  });
+});

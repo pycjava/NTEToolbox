@@ -299,23 +299,29 @@ export function setTargetWindow(
 export function refreshWindows(
   state: ClientState,
   gameId: string,
-  windows: WindowInfo[]
+  windows: WindowInfo[] | null | undefined
 ): ClientState {
+  const nextWindows = windows ?? [];
   return {
     ...state,
-    games: state.games.map((game) =>
-      game.id !== gameId || !game.controller
-        ? game
-        : {
-            ...game,
-            controller: {
-              ...game.controller,
-              availableWindows: windows,
-              targetWindow: "",
-              connected: false
-            }
-          }
-    )
+    games: state.games.map((game) => {
+      if (game.id !== gameId || !game.controller) return game;
+
+      const controller = game.controller;
+      // 已选窗口在新列表里仍存在时保留选择（刷新不应把有效选择清掉）；
+      // 只有窗口消失（或从未选择）才重置。
+      const stillSelected = nextWindows.some((win) => win.hwnd === controller.targetWindow);
+
+      return {
+        ...game,
+        controller: {
+          ...controller,
+          availableWindows: nextWindows,
+          targetWindow: stillSelected ? controller.targetWindow : "",
+          connected: stillSelected
+        }
+      };
+    })
   };
 }
 

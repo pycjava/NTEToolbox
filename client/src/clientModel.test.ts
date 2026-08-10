@@ -6,6 +6,7 @@ import {
   addGame,
   buildInitialClientState,
   getVisibleOptionKeys,
+  refreshWindows,
   resolveTheme,
   selectGame,
   setFeatureConfig,
@@ -14,7 +15,8 @@ import {
   setGlobalSettingsValues,
   setTheme,
   type GameDefinition,
-  type OptionDefinition
+  type OptionDefinition,
+  type WindowInfo
 } from "./clientModel";
 
 const fishOptionDefinitions: Record<string, OptionDefinition> = {
@@ -393,6 +395,71 @@ describe("client model", () => {
     expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图");
     expect(visibleOptionKeys).not.toContain("实时辅助_S级鱼截图_设置");
     expect(assist.configSummary).toBe("自动拾取 关闭 · 永远拾取 关闭");
+  });
+
+  describe("window refresh", () => {
+    function controlledState(targetWindow: string, windows: WindowInfo[]) {
+      return buildInitialClientState([
+        {
+          id: "hs",
+          name: "炉石传说",
+          shortName: "炉",
+          status: "ready",
+          kind: "process",
+          features: [],
+          controller: {
+            controllerType: "",
+            targetWindow,
+            availableWindows: windows,
+            connected: targetWindow !== ""
+          }
+        }
+      ]);
+    }
+
+    it("keeps the selected window when it still exists after refresh", () => {
+      const state = controlledState("595722", [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" }
+      ]);
+
+      const next = refreshWindows(state, "hs", [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" },
+        { hwnd: "1234", title: "微信", className: "WeChatMainWndForPC" }
+      ]);
+
+      const controller = next.games[0].controller;
+      expect(controller?.availableWindows).toHaveLength(2);
+      expect(controller?.targetWindow).toBe("595722");
+      expect(controller?.connected).toBe(true);
+    });
+
+    it("clears the selection when the selected window disappears", () => {
+      const state = controlledState("595722", [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" }
+      ]);
+
+      const next = refreshWindows(state, "hs", [
+        { hwnd: "1234", title: "微信", className: "WeChatMainWndForPC" }
+      ]);
+
+      const controller = next.games[0].controller;
+      expect(controller?.availableWindows).toHaveLength(1);
+      expect(controller?.targetWindow).toBe("");
+      expect(controller?.connected).toBe(false);
+    });
+
+    it("populates the list without connecting when nothing was selected", () => {
+      const state = controlledState("", []);
+
+      const next = refreshWindows(state, "hs", [
+        { hwnd: "595722", title: "炉石传说", className: "UnityWndClass" }
+      ]);
+
+      const controller = next.games[0].controller;
+      expect(controller?.availableWindows).toHaveLength(1);
+      expect(controller?.targetWindow).toBe("");
+      expect(controller?.connected).toBe(false);
+    });
   });
 
   describe("theme", () => {
