@@ -51,27 +51,45 @@ class SingleInstanceLock:
 
         Returns:
             (True, "") 获取成功；
-            (False, 消息) 已有存活实例，拒绝启动。
+            (False, 消息) 已有存活实例，或无法清理残留锁文件。
         """
-        try:
-            fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            # 已有锁文件：PID 存活 → 拒绝；PID 已死（残留）→ 接管
+        # 迭代而非递归：unlink 失败时旧实现会无限递归（RecursionError）。
+        # 每轮重新 O_EXCL 创建：unlink 成功后不直接返回成功，而是下一轮
+        # 再用 O_EXCL 确认——天然消除 TOCTOU（若期间别的进程抢占，下一轮
+        # 读到其存活 PID 会拒绝）。正常路径 1-2 轮收敛。
+        for _ in range(3):
             try:
-                existing = int(self.lock_path.read_text(encoding="utf-8").strip() or "0")
-            except (OSError, ValueError):
-                existing = 0
-            if existing > 0 and _process_alive(existing):
-                return False, f"另一个教练实例正在运行（PID {existing}）。请先结束它再启动。"
-            try:
-                self.lock_path.unlink()
-            except OSError:
-                pass
-            return self.acquire()
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(str(os.getpid()))
-            return True, ""
+                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                # 已有锁文件：PID 存活 → 拒绝；PID 已死（残留）→ 尝试清理后下轮接管
+                try:
+                    existing = int(
+                        self.lock_path.read_text(encoding="utf-8").strip() or "0"
+                    )
+                except (OSError, ValueError):
+                    existing = 0
+                if existing > 0 and _process_alive(existing):
+                    return (
+                        False,
+                        f"另一个教练实例正在运行（PID {existing}）。请先结束它再启动。",
+                    )
+                try:
+                    self.lock_path.unlink()
+                except OSError as e:
+                    # 残留锁删不掉（只读 FS / 权限不足）→ 报错而非递归
+                    return (
+                        False,
+                        f"无法清理残留锁文件 {self.lock_path}：{e}。请手动删除后重试。",
+                    )
+                # unlink 成功 → 进入下一轮 O_EXCL（重新确认，防 TOCTOU）
+                continue
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(str(os.getpid()))
+                return True, ""
+
+        # 理论上不可达：3 轮内未收敛（持续的并发抢占）。报错而非栈溢出。
+        return False, f"获取单实例锁失败：{self.lock_path} 反复被抢占，请重试。"
 
     def release(self) -> None:
         try:
