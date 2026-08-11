@@ -43,6 +43,14 @@ pub struct HsCoachConfigPayload {
     pub model: String,
     pub base_url: String,
     pub friendly_player_id: Option<i32>,
+    /// 教练模式：teach/compete/silent（LLM 独有，信息密度切换）。
+    /// serde(default) 保证旧 config.json 无此字段时回退 teach。
+    #[serde(default = "default_coach_mode")]
+    pub coach_mode: String,
+}
+
+fn default_coach_mode() -> String {
+    "teach".to_string()
 }
 
 impl Default for HsCoachConfigPayload {
@@ -52,6 +60,7 @@ impl Default for HsCoachConfigPayload {
             model: DEFAULT_MODEL.to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             friendly_player_id: None,
+            coach_mode: default_coach_mode(),
         }
     }
 }
@@ -445,6 +454,7 @@ mod tests {
         assert_eq!(config.model, "deepseek-chat");
         assert_eq!(config.base_url, "https://api.deepseek.com/v1");
         assert!(config.friendly_player_id.is_none());
+        assert_eq!(config.coach_mode, "teach");
     }
 
     #[test]
@@ -456,6 +466,7 @@ mod tests {
             model: "deepseek-reasoner".to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             friendly_player_id: Some(2),
+            coach_mode: "compete".to_string(),
         };
 
         let text = serde_json::to_string_pretty(&config).expect("serialize");
@@ -466,10 +477,21 @@ mod tests {
         assert_eq!(loaded.api_key, "sk-test");
         assert_eq!(loaded.model, "deepseek-reasoner");
         assert_eq!(loaded.friendly_player_id, Some(2));
+        assert_eq!(loaded.coach_mode, "compete");
         // 字段名必须与 Python 端一致（共享配置文件）
         let raw = fs::read_to_string(&path).expect("read raw");
         assert!(raw.contains("\"api_key\""));
         assert!(raw.contains("\"friendly_player_id\""));
+        assert!(raw.contains("\"coach_mode\""));
+    }
+
+    #[test]
+    fn config_legacy_without_coach_mode_defaults_to_teach() {
+        // 旧版 config.json 没有 coach_mode 字段；serde(default) 应回退 teach
+        let legacy = r#"{"api_key":"","model":"deepseek-chat","base_url":"https://api.deepseek.com/v1","friendly_player_id":null}"#;
+        let parsed: HsCoachConfigPayload =
+            serde_json::from_str(legacy).expect("parse legacy");
+        assert_eq!(parsed.coach_mode, "teach");
     }
 
     #[test]

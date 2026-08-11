@@ -48,3 +48,9 @@ version = { attr = "agent._version.__version__" }
 
 [tool.setuptools.package-data]
 ntetoolbox = ["assets/**/*"]
+
+[tool.pytest.ini_options]
+# testpaths 锁定 tests/，避免误收 build 产物。
+# 注：tests/__init__.py 让 tests 成为正规包，`from tests._helpers import ...`
+# 即可工作（之前缺 __init__.py 导致 5 个测试模块收集失败）。
+testpaths = ["tests"]

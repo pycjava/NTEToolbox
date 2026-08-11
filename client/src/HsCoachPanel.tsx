@@ -24,6 +24,12 @@ type HsCoachConfig = {
   model: string;
   base_url: string;
   friendly_player_id: number | null;
+  coach_mode: string;
+};
+
+type HsAdviceAlternative = {
+  headline: string;
+  why: string;
 };
 
 type HsAdvice = {
@@ -34,6 +40,8 @@ type HsAdvice = {
   warning: string;
   latency_ms: number;
   degraded: boolean;
+  lethal: boolean;
+  alternatives: HsAdviceAlternative[];
 };
 
 type HsAdvicePayload = {
@@ -337,6 +345,17 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
                 })}
               />
             </label>
+            <label className="option-row">
+              <span className="option-label">教练模式</span>
+              <select
+                value={configDraft.coach_mode ?? "teach"}
+                onChange={(event) => setConfigDraft({ ...configDraft, coach_mode: event.target.value })}
+              >
+                <option value="teach">教学（详细讲解原理）</option>
+                <option value="compete">竞赛（简洁快速决策）</option>
+                <option value="silent">静默（仅关键时发声）</option>
+              </select>
+            </label>
           </div>
         </section>
       ) : null}
@@ -409,9 +428,10 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
           {snapshot?.advice ? <span className="hs-turn-badge">第 {snapshot.advice.turn} 回合</span> : null}
         </div>
         {advice ? (
-          <article className={`hs-advice hs-advice-${advice.kind}`}>
+          <article className={`hs-advice hs-advice-${advice.kind}${advice.lethal ? " hs-advice-lethal" : ""}`}>
             <div className="hs-advice-head">
               <span className="hs-advice-kind">{KIND_LABEL[advice.kind] ?? advice.kind}</span>
+              {advice.lethal ? <span className="hs-advice-lethal-badge">⚔️ 可斩杀</span> : null}
               {advice.degraded ? <span className="hs-advice-degraded">降级</span> : null}
               {advice.latency_ms > 0 ? <span className="hs-advice-latency">{Math.round(advice.latency_ms / 100) / 10}s</span> : null}
             </div>
@@ -423,6 +443,19 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
               </ol>
             ) : null}
             {advice.warning ? <p className="hs-advice-warning">⚠ {advice.warning}</p> : null}
+            {advice.alternatives && advice.alternatives.length > 0 ? (
+              <div className="hs-advice-alternatives">
+                <h5 className="hs-advice-alt-title">其他可行打法</h5>
+                <ul>
+                  {advice.alternatives.map((alt, index) => (
+                    <li key={index}>
+                      <span className="hs-advice-alt-headline">{alt.headline}</span>
+                      {alt.why ? <span className="hs-advice-alt-why"> — {alt.why}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </article>
         ) : (
           <p className="hs-empty">暂无建议。启动教练并打一局炉石，回合开始时这里会出现建议。</p>

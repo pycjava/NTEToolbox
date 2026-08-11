@@ -34,7 +34,8 @@ const DEFAULT_CONFIG = {
   api_key: "",
   model: "deepseek-chat",
   base_url: "https://api.deepseek.com/v1",
-  friendly_player_id: null
+  friendly_player_id: null,
+  coach_mode: "teach"
 };
 
 const IDLE_SNAPSHOT = {

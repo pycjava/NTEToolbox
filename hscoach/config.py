@@ -34,6 +34,7 @@ class CoachConfig:
     model: str = DEFAULT_MODEL
     base_url: str = DEFAULT_BASE_URL
     friendly_player_id: int | None = None
+    coach_mode: str = "teach"  # teach/compete/silent（LLM 独有，信息密度）
 
 
 def config_path() -> Path:
@@ -65,6 +66,9 @@ def load_config(path: Path | None = None) -> CoachConfig:
     fp = data.get("friendly_player_id")
     if isinstance(fp, int):
         cfg.friendly_player_id = fp
+    # 教练模式：只认合法值，否则回退 teach
+    mode = str(data.get("coach_mode", "teach"))
+    cfg.coach_mode = mode if mode in ("teach", "compete", "silent") else "teach"
     return cfg
 
 

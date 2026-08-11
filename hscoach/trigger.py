@@ -76,11 +76,14 @@ class TurnTrigger:
 
     last_advice：上一回合的建议，LLM 全部失败时作为降级建议回显
     （spec：超时降级为上一回合建议）。
+    coach_mode：LLM 教练模式（teach/compete/silent），None 用默认。
+        LLM 独有：切换信息密度，传统 tracker 做不到。
     """
 
     friendly_player_id: int
     last_triggered_turn: int = 0
     last_advice: Advice | None = None
+    coach_mode: str | None = None
 
     def detect_new_friendly_turn(self, snapshot: GameSnapshot) -> int | None:
         """若 snapshot 是轮到友方的新回合（turn > 上次触发的），返回 turn 号；否则 None。"""
@@ -131,7 +134,8 @@ class TurnTrigger:
         worker 线程独占调用，故 last_advice 的读写在此处无需加锁。
         """
         advice = get_advice(
-            snapshot, client, self.friendly_player_id, fallback=fallback
+            snapshot, client, self.friendly_player_id, fallback=fallback,
+            coach_mode=self.coach_mode,
         )
         self.last_advice = advice
         publish_advice(publish_dir, advice, turn)
@@ -146,7 +150,10 @@ class TurnTrigger:
     ) -> Advice:
         """手动触发"再想想"：不强求 turn 递增，基于当前局面生成。"""
         snapshot = serialize_game(game, self.friendly_player_id, db)
-        advice = get_advice(snapshot, client, self.friendly_player_id, fallback=self.last_advice)
+        advice = get_advice(
+            snapshot, client, self.friendly_player_id, fallback=self.last_advice,
+            coach_mode=self.coach_mode,
+        )
         self.last_advice = advice
         publish_advice(publish_dir, advice, snapshot.turn)
         return advice

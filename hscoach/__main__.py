@@ -207,7 +207,9 @@ def _run(args, cfg, publish_dir: Path) -> int:
         args.friendly_player_id is not None or cfg.friendly_player_id is not None
     )
     friendly_player_id = cfg.friendly_player_id or 1
-    trigger = TurnTrigger(friendly_player_id=friendly_player_id)
+    trigger = TurnTrigger(
+        friendly_player_id=friendly_player_id, coach_mode=cfg.coach_mode
+    )
     detector = IncrementalTurnDetector(friendly_player_id=friendly_player_id)
 
     # 4. 后台线程：增量 tail → 正则检测回合 → 全量解析 → 校准 → LLM（优化 2+3）
