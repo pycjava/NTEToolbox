@@ -297,12 +297,19 @@ def publish_game_state(publish_dir: Path, snapshot: GameSnapshot, friendly_playe
     """
     publish_dir.mkdir(parents=True, exist_ok=True)
     target = publish_dir / GAME_STATE_FILENAME
+    players_payload = {pid: pv.to_dict() for pid, pv in snapshot.players.items()}
+    # 友方注入抽牌概率参考（前端盒子可显示，补 HDT 核心价值）
+    friendly_pv = players_payload.get(str(friendly_player_id)) or players_payload.get(friendly_player_id)
+    if friendly_pv is not None and friendly_pv.get("deck_count", 0) > 0:
+        from hscoach.probability import draw_odds_table
+
+        friendly_pv["draw_odds"] = draw_odds_table(friendly_pv["deck_count"])
     payload = {
         "turn": snapshot.turn,
         "current_player_id": snapshot.current_player_id,
         "friendly_player_id": friendly_player_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "players": {pid: pv.to_dict() for pid, pv in snapshot.players.items()},
+        "players": players_payload,
     }
     fd, tmp_path = tempfile.mkstemp(
         dir=str(publish_dir), prefix=".state_", suffix=".tmp"

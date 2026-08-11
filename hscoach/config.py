@@ -66,9 +66,13 @@ def load_config(path: Path | None = None) -> CoachConfig:
     fp = data.get("friendly_player_id")
     if isinstance(fp, int):
         cfg.friendly_player_id = fp
-    # 教练模式：只认合法值，否则回退 teach
-    mode = str(data.get("coach_mode", "teach"))
-    cfg.coach_mode = mode if mode in ("teach", "compete", "silent") else "teach"
+    # 教练模式：合法值以 coach.COACH_MODES 为唯一来源（消除 Shotgun Surgery，
+    # 新增模式只改 coach.py 一处）。延迟导入避免 config→coach→httpx 的
+    # 模块加载期重依赖——config 应保持轻量可独立加载。
+    from hscoach.coach import COACH_MODES, DEFAULT_COACH_MODE
+
+    mode = str(data.get("coach_mode", DEFAULT_COACH_MODE))
+    cfg.coach_mode = mode if mode in COACH_MODES else DEFAULT_COACH_MODE
     return cfg
 
 

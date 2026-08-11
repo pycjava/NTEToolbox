@@ -39,6 +39,7 @@ _FLAG_TAGS: dict[str, GameTag] = {
     "冻结": GameTag.FROZEN,
     "潜行": GameTag.STEALTH,
     "吸血": GameTag.LIFESTEAL,
+    "冲锋": GameTag.CHARGE,
     "突袭": GameTag.RUSH,
     "免疫": GameTag.IMMUNE,
     "休眠": GameTag.DORMANT,

@@ -67,28 +67,23 @@ class LethalCheck:
         )
 
 
-def _board_damage(board: list[CardView]) -> int:
-    """场攻求和：排除不能攻击的随从。"""
+def _board_eval(board: list[CardView]) -> tuple[int, list[dict]]:
+    """场攻求和 + 来源明细（单次遍历，合并原 _board_damage/_board_detail）。
+
+    排除不能攻击的随从（已尽/冻结/无法攻击/休眠）。武器作为 board 实体
+    时其 attack 也计入（英雄可挥砍打脸）——武器有"已尽"flag 会被排除。
+    返回 (总场攻, 明细列表)。
+    """
     total = 0
+    detail: list[dict] = []
     for c in board:
         if c.flags and any(f in _NON_ATTACKING_FLAGS for f in c.flags):
             continue
         atk = c.attack or 0
         if atk > 0:
             total += atk
-    return total
-
-
-def _board_detail(board: list[CardView]) -> list[dict]:
-    """场攻来源明细。"""
-    detail = []
-    for c in board:
-        if c.flags and any(f in _NON_ATTACKING_FLAGS for f in c.flags):
-            continue
-        atk = c.attack or 0
-        if atk > 0:
             detail.append({"name": c.name or "随从", "damage": atk, "source": "board"})
-    return detail
+    return total, detail
 
 
 def _extract_spell_damage(text: str) -> int | None:
@@ -101,41 +96,86 @@ def _extract_spell_damage(text: str) -> int | None:
     return None
 
 
-def _hand_spell_damage(
-    hand: list[CardView], mana_budget: int
-) -> tuple[int, list[dict]]:
-    """手牌中直接伤害法术的贪心选取（受法力预算约束）。
+def _is_charge_minion(c: CardView) -> bool:
+    """手牌中冲锋随从：本回合打出即可攻击英雄（突袭不能打脸，不计）。"""
+    return bool(c.flags and "冲锋" in c.flags and (c.attack or 0) > 0)
 
-    贪心策略：按"单位法力伤害"降序选，尽可能榨干法力——对纯直接伤害
-    法术这是 0-1 背包的近似最优（误差限于单张卡的费用分摊）。
-    保守：只认 text 明确"造成 N 点伤害"的牌；带条件（"如果…则造成"）
-    的也认，因为提取的 N 是其标称伤害，是否触发由 LLM 定性。
+
+def _collect_hand_damage_candidates(
+    hand: list[CardView],
+) -> list[tuple[int, int, str, str]]:
+    """收集手牌中受法力约束的"可打出直接伤害"候选。
+
+    两类：
+    - 直接伤害法术（text 含"造成 N 点伤害"）
+    - 冲锋随从（flags 含"冲锋"，attack 即伤害）
+    突袭随从不计（本回合只能打随从，不能打脸）。
+    返回 [(cost, damage, name, source), ...]，cost<=0 的按 0 处理。
     """
-    candidates = []
+    candidates: list[tuple[int, int, str, str]] = []
     for c in hand:
-        if c.cost is None:
-            continue
-        dmg = _extract_spell_damage(c.text)
-        if dmg is None or dmg <= 0:
-            continue
-        if c.cost <= 0:
-            # 0 费伤害法术（罕见但存在）—— 效率无穷，优先选
-            candidates.append((float("inf"), c.cost, dmg, c.name or "法术"))
-        else:
-            candidates.append((dmg / c.cost, c.cost, dmg, c.name or "法术"))
+        cost = c.cost if c.cost is not None and c.cost > 0 else 0
+        # 直接伤害法术
+        spell_dmg = _extract_spell_damage(c.text)
+        if spell_dmg is not None and spell_dmg > 0:
+            candidates.append((cost, spell_dmg, c.name or "法术", "spell"))
+            continue  # 同一张卡不重复计（法术不会同时是冲锋随从）
+        # 冲锋随从
+        if _is_charge_minion(c):
+            candidates.append((cost, c.attack or 0, c.name or "冲锋随从", "charge"))
+    return candidates
 
-    # 按单位法力伤害降序；效率相同时优先绝对伤害大的（接近背包最优）
-    candidates.sort(key=lambda x: (x[0], x[2]), reverse=True)
 
-    total_damage = 0
-    spent = 0
-    detail: list[dict] = []
-    for _eff, cost, dmg, name in candidates:
-        if spent + cost <= mana_budget:
-            spent += cost
-            total_damage += dmg
-            detail.append({"name": name, "damage": dmg, "source": "spell"})
-    return total_damage, detail
+def _knapsack_pick(
+    candidates: list[tuple[int, int, str, str]], mana_budget: int
+) -> tuple[int, list[dict]]:
+    """0-1 背包：在法力预算内选伤害总和最大的候选子集（DP 精确最优）。
+
+    修复 Spec 审查 #4：原贪心按 dmg/cost 降序，可被背包反例击穿。
+    DP 状态：dp[m] = 花费恰为 m 时能获得的最大伤害及物品列表。
+    cost 上界 = mana_budget（炉石法力通常 <=10，DP 规模极小）。
+    """
+    if not candidates or mana_budget <= 0:
+        # mana_budget==0 时仍可选 0 费候选
+        if mana_budget == 0:
+            total = 0
+            detail: list[dict] = []
+            for cost, dmg, name, src in candidates:
+                if cost == 0:
+                    total += dmg
+                    detail.append({"name": name, "damage": dmg, "source": src})
+            return total, detail
+        return 0, []
+
+    # 标准 0-1 背包：dp[j] = 考虑前 i 件、费用<=j 的最大伤害；prev 回溯选择
+    # 费用超过预算的物品直接跳过；0 费物品特殊处理（必选，不占预算）
+    zero_cost: list[tuple[int, str, str]] = []  # (dmg, name, source)
+    items: list[tuple[int, int, str, str]] = []  # (cost, dmg, name, source) cost>0
+    for cost, dmg, name, src in candidates:
+        if cost == 0:
+            zero_cost.append((dmg, name, src))
+        elif cost <= mana_budget:
+            items.append((cost, dmg, name, src))
+
+    W = mana_budget
+    # dp[j] = (max_damage, chosen_list)
+    dp: list[tuple[int, list[tuple[int, int, str, str]]]] = [(0, [])] * (W + 1)
+    for cost, dmg, name, src in items:
+        # 逆序更新（0-1 背包标准）
+        new_dp = list(dp)
+        for j in range(W, cost - 1, -1):
+            prev_dmg, prev_chosen = dp[j - cost]
+            cand_dmg = prev_dmg + dmg
+            if cand_dmg > dp[j][0]:
+                new_dp[j] = (cand_dmg, prev_chosen + [(cost, dmg, name, src)])
+        dp = new_dp
+
+    best_dmg, best_chosen = max(dp, key=lambda x: x[0])
+    # 加上 0 费候选（必选）
+    total = best_dmg + sum(d for d, _, _ in zero_cost)
+    detail = [{"name": n, "damage": d, "source": s} for _, d, n, s in best_chosen]
+    detail.extend({"name": n, "damage": d, "source": s} for d, n, s in zero_cost)
+    return total, detail
 
 
 def compute_lethal(
@@ -163,17 +203,17 @@ def compute_lethal(
         return LethalCheck()
     opponent = snapshot.players[opponent_id]
 
-    # 场攻（随从可直接打脸）
-    board_dmg = _board_damage(friendly.board)
-    detail = _board_detail(friendly.board)
+    # 场攻（随从 + 已装备武器可直接打脸）
+    board_dmg, detail = _board_eval(friendly.board)
 
-    # 手牌伤害法术（受法力预算约束）。法力预算 = 友方当前法力
+    # 手牌伤害（法术 + 冲锋随从，受法力预算约束，DP 求最优）
     mana_budget = friendly.mana or 0
     hand = friendly.hand if isinstance(friendly.hand, list) else []
-    spell_dmg, spell_detail = _hand_spell_damage(hand, mana_budget)
-    detail.extend(spell_detail)
+    candidates = _collect_hand_damage_candidates(hand)
+    hand_dmg, hand_detail = _knapsack_pick(candidates, mana_budget)
+    detail.extend(hand_detail)
 
-    available = board_dmg + spell_dmg
+    available = board_dmg + hand_dmg
 
     # 斩杀判定：确定直接伤害 >= 对手(血+甲)
     opp_hp = (opponent.health or 0) + (opponent.armor or 0)

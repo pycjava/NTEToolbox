@@ -240,6 +240,18 @@ def build_user_prompt(
         f"对手牌库剩余：{opponent.get('deck_count', 0)} 张",
         "",
     ]
+    # 抽牌概率参考：牌库剩余 N 张时下回合抽到关键牌的概率（补 HDT 核心价值）
+    friendly_deck = friendly.get('deck_count', 0) or 0
+    if friendly_deck > 0:
+        from hscoach.probability import draw_odds_table
+
+        odds = draw_odds_table(friendly_deck)
+        lines += [
+            f"【抽牌概率】牌库 {friendly_deck} 张——下回合抽到特定单张"
+            f"{odds['one_copy_next_draw']*100:.0f}%、两张之一"
+            f"{odds['two_copy_next_draw']*100:.0f}%。",
+            "",
+        ]
     # 伤害评估：代码精确计算的斩杀判定（补 LLM 算术短板）
     if lethal is not None:
         lines += [

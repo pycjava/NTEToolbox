@@ -89,3 +89,19 @@ def draw_probability_summary(
         f"{turn_word}抽到概率 {pct:.1f}%"
         f"（牌库 {deck_size} 张含 {copies} 张目标）"
     )
+
+
+def draw_odds_table(deck_size: int) -> dict[str, float]:
+    """牌库剩余 N 张时的下回合抽牌概率参考（不依赖具体卡牌构成）。
+
+    返回 1-of（单张关键牌）和 2-of（两张关键牌）在下回合抽中的概率。
+    用于注入 prompt / game_state.json，让 LLM 与玩家感知随机性。
+
+    为什么不依赖卡组构成：Power.log 只对被效果揭示的牌库牌写 CardID，
+    无法可靠拿到完整己方 30 张构成。故给"通用参考"：牌库还剩 N 张时，
+    抽到关键牌（假设 1 或 2 张）的概率。
+    """
+    return {
+        "one_copy_next_draw": draw_at_least_one(deck_size, 1, 1),
+        "two_copy_next_draw": draw_at_least_one(deck_size, 2, 1),
+    }

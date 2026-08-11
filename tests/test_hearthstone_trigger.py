@@ -172,7 +172,11 @@ class PublishGameStateTest(unittest.TestCase):
                 self.assertEqual(set(pv["hand"]), {"count"})
 
     def test_snapshot_matches_serialize(self):
-        """发布内容与 serialize_game 输出一致（单一来源，无二次加工）。"""
+        """发布内容基于 serialize_game 输出，友方额外注入抽牌概率参考。
+
+        publish 层对友方玩家加 draw_odds 字段（补 HDT 核心价值，前端盒子
+        可显示）；对手与基础字段与 serialize_game 输出一致。
+        """
         game = self.result.games[-1]
         snapshot = serialize_game(game, 1, db=None)
         import tempfile
@@ -184,10 +188,15 @@ class PublishGameStateTest(unittest.TestCase):
         self.assertEqual(data["current_player_id"], snapshot.current_player_id)
         self.assertEqual(data["friendly_player_id"], 1)
         for pid in snapshot.players:
-            self.assertEqual(
-                data["players"][str(pid)],
-                snapshot.players[pid].to_dict(),
-            )
+            base = snapshot.players[pid].to_dict()
+            if pid == 1 and base.get("deck_count", 0) > 0:
+                # 友方（牌库非空）多了 draw_odds；其余字段应与 base 一致
+                published = data["players"][str(pid)]
+                self.assertIn("draw_odds", published)
+                published_no_odds = {k: v for k, v in published.items() if k != "draw_odds"}
+                self.assertEqual(published_no_odds, base)
+            else:
+                self.assertEqual(data["players"][str(pid)], base)
 
 
 class TriggerFallbackTest(unittest.TestCase):

@@ -59,6 +59,7 @@ type HsPlayerState = {
   hand: { count: number } | Array<{ name: string; cost: number; attack?: number; health?: number }>;
   board: Array<{ name: string }>;
   deck_count: number;
+  draw_odds?: { one_copy_next_draw: number; two_copy_next_draw: number };
 };
 
 type HsGameStatePayload = {
@@ -347,6 +348,8 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
             </label>
             <label className="option-row">
               <span className="option-label">教练模式</span>
+              {/* 跨语言约束：新增模式须同步 hscoach/coach.py:COACH_MODES
+                  + hscoach/config.py 校验 + hscoach_bridge.rs + 此处 */}
               <select
                 value={configDraft.coach_mode ?? "teach"}
                 onChange={(event) => setConfigDraft({ ...configDraft, coach_mode: event.target.value })}
@@ -505,6 +508,11 @@ function HsPlayerSummary({ title, player, current }: { title: string; player?: H
       <span className="hs-player-meta">
         手牌 {handLabel} · 牌库 {player.deck_count} · 场面 {player.board.length}
       </span>
+      {player.draw_odds ? (
+        <span className="hs-player-meta hs-draw-odds">
+          下回合抽：单张 {Math.round(player.draw_odds.one_copy_next_draw * 100)}% · 两张之一 {Math.round(player.draw_odds.two_copy_next_draw * 100)}%
+        </span>
+      ) : null}
     </div>
   );
 }

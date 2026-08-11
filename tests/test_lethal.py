@@ -239,6 +239,30 @@ class HandDamageTest(unittest.TestCase):
         # 只够打 big（8 费 8 伤），cheap 超预算
         self.assertEqual(check.available_damage, 8)
 
+    def test_knapsack_finds_truly_optimal_not_greedy(self):
+        """0-1 背包反例：贪心会选错，DP 必须选最优组合。
+
+        法力 5：
+        - A: 2费6伤（效率3.0，贪心先选）
+        - B: 3费5伤（效率1.67）
+        - C: 2费4伤（效率2.0）
+        贪心选 A(剩3费)→选不下 B(3费) 但能选 C(2费)? 剩3费选C(2费)=6+4=10
+        但最优是 B+C=3+2=5费 5+4=9伤，或 A+C=2+2=4费 6+4=10伤
+        实际最优：A+C=10伤（4费）。贪心按效率选A后剩3费选C也=10。
+        换个反例：法力5，A=2费6伤，B=3费5伤 → 贪心选A(剩3)选B(3费5伤)=11
+        真正反例：法力4，A=3费5伤(效率1.67)，B=2费3伤(1.5)，C=2费3伤(1.5)
+        贪心选A(剩1)选不下BC = 5伤；最优 B+C=4费6伤。
+        """
+        a = _card(name="A", cost=3, text="造成 5 点伤害。")
+        b = _card(name="B", cost=2, text="造成 3 点伤害。")
+        c = _card(name="C", cost=2, text="造成 3 点伤害。")
+        friendly = _player(mana=4, hand=[a, b, c])
+        opp = _player(health=6)
+        check = compute_lethal(_snapshot(friendly, opp))
+        # DP 应选 B+C=6伤（4费），而非贪心的 A=5伤
+        self.assertEqual(check.available_damage, 6)
+        self.assertTrue(check.lethal)
+
 
 class DetailFormatTest(unittest.TestCase):
     """lethal.detail 提供可读的"伤害来源清单"，供注入 prompt。"""
