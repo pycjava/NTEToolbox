@@ -20,6 +20,7 @@ use std::os::windows::process::CommandExt;
 const HSCOACHD_DISPLAY_NAME: &str = "hscoachd";
 const ADVICE_FILENAME: &str = "advice.json";
 const GAME_STATE_FILENAME: &str = "game_state.json";
+const STATS_FILENAME: &str = "stats.json";
 const PROCESS_WAIT_POLL_MS: u64 = 50;
 const PROCESS_FORCE_STOP_TIMEOUT_MS: u64 = 3_000;
 
@@ -37,7 +38,6 @@ pub struct HsCoachStateSnapshot {
     /// 战绩统计（stats.json，由 hscoachd 在对局结束时聚合写入）。
     pub stats: Option<Value>,
 }
-
 /// 与 Python hscoach.config.CoachConfig 完全一致的字段（snake_case，共享文件）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HsCoachConfigPayload {
@@ -267,7 +267,7 @@ impl HsCoachRuntime {
             exit_code,
             advice: read_json_file(&publish_dir.join(ADVICE_FILENAME)),
             game_state: read_json_file(&publish_dir.join(GAME_STATE_FILENAME)),
-            stats: read_json_file(&publish_dir.join("stats.json")),
+            stats: read_json_file(&publish_dir.join(STATS_FILENAME)),
         })
     }
 

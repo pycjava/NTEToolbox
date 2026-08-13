@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 # 复用 state 的 CardView 类型（lethal 计算器与序列化层共享卡牌视图）
 from hscoach.state import CardView, GameSnapshot
@@ -132,17 +133,15 @@ def _is_charge_minion(c: CardView) -> bool:
 
 def _collect_hand_damage_candidates(
     hand: list[CardView],
-) -> list[tuple[int, int, str, str, bool]]:
+) -> list[HandCandidate]:
     """收集手牌中受法力约束的"可打出直接伤害"候选。
 
     两类：
     - 直接伤害法术（text 含"造成 N 点伤害"）
     - 冲锋随从（flags 含"冲锋"，attack 即伤害）
     突袭随从不计（本回合只能打随从，不能打脸）。
-    返回 [(cost, damage, name, source, windfury), ...]，cost<=0 的按 0
-    处理。windfury=True 表示打出后本回合可攻击两次（费用只付一次）。
     """
-    candidates: list[tuple[int, int, str, str, bool]] = []
+    candidates: list[HandCandidate] = []
     for c in hand:
         cost = c.cost if c.cost is not None and c.cost > 0 else 0
         # 随从的战吼/亡语文本不算确定打脸（只检查冲锋），非随从（法术等）
@@ -150,19 +149,26 @@ def _collect_hand_damage_candidates(
         if c.card_type != "MINION":
             spell_dmg = _spell_face_damage(c.text)
             if spell_dmg is not None and spell_dmg > 0:
-                candidates.append((cost, spell_dmg, c.name or "法术", "spell", False))
+                candidates.append(
+                    HandCandidate(cost, spell_dmg, c.name or "法术", "spell", False)
+                )
                 continue  # 同一张卡不重复计（法术不会同时是冲锋随从）
         # 冲锋随从（风怒冲锋可攻击两次，但仍只占一次费用）
         if _is_charge_minion(c):
             windfury = bool(c.flags and "风怒" in c.flags)
             candidates.append(
-                (cost, c.attack or 0, c.name or "冲锋随从", "charge", windfury)
+                HandCandidate(cost, c.attack or 0, c.name or "冲锋随从", "charge", windfury)
             )
     return candidates
 
 
+def _candidate_detail(c: HandCandidate) -> dict:
+    """把候选转成 detail 字典（compute_lethal 构造攻击/法术条目时消费）。"""
+    return {"name": c.name, "damage": c.damage, "source": c.source, "windfury": c.windfury}
+
+
 def _knapsack_pick(
-    candidates: list[tuple[int, int, str, str, bool]], mana_budget: int
+    candidates: list[HandCandidate], mana_budget: int
 ) -> tuple[int, list[dict]]:
     """0-1 背包：在法力预算内选伤害总和最大的候选子集（DP 精确最优）。
 
@@ -173,51 +179,33 @@ def _knapsack_pick(
     if not candidates or mana_budget <= 0:
         # mana_budget==0 时仍可选 0 费候选
         if mana_budget == 0:
-            total = 0
-            detail: list[dict] = []
-            for cost, dmg, name, src, wf in candidates:
-                if cost == 0:
-                    total += dmg
-                    detail.append(
-                        {"name": name, "damage": dmg, "source": src, "windfury": wf}
-                    )
-            return total, detail
+            zero = [c for c in candidates if c.cost == 0]
+            return sum(c.damage for c in zero), [_candidate_detail(c) for c in zero]
         return 0, []
 
     # 标准 0-1 背包：dp[j] = 考虑前 i 件、费用<=j 的最大伤害；prev 回溯选择
     # 费用超过预算的物品直接跳过；0 费物品特殊处理（必选，不占预算）
-    zero_cost: list[tuple[int, str, str, bool]] = []  # (dmg, name, source, windfury)
-    items: list[tuple[int, int, str, str, bool]] = []  # (cost, dmg, name, source, wf)
-    for cost, dmg, name, src, wf in candidates:
-        if cost == 0:
-            zero_cost.append((dmg, name, src, wf))
-        elif cost <= mana_budget:
-            items.append((cost, dmg, name, src, wf))
+    zero_cost = [c for c in candidates if c.cost == 0]
+    items = [c for c in candidates if 0 < c.cost <= mana_budget]
 
     W = mana_budget
     # dp[j] = (max_damage, chosen_list)
-    dp: list[tuple[int, list[tuple[int, int, str, str, bool]]]] = [(0, [])] * (W + 1)
-    for cost, dmg, name, src, wf in items:
+    dp: list[tuple[int, list[HandCandidate]]] = [(0, [])] * (W + 1)
+    for c in items:
         # 逆序更新（0-1 背包标准）
         new_dp = list(dp)
-        for j in range(W, cost - 1, -1):
-            prev_dmg, prev_chosen = dp[j - cost]
-            cand_dmg = prev_dmg + dmg
+        for j in range(W, c.cost - 1, -1):
+            prev_dmg, prev_chosen = dp[j - c.cost]
+            cand_dmg = prev_dmg + c.damage
             if cand_dmg > dp[j][0]:
-                new_dp[j] = (cand_dmg, prev_chosen + [(cost, dmg, name, src, wf)])
+                new_dp[j] = (cand_dmg, prev_chosen + [c])
         dp = new_dp
 
     best_dmg, best_chosen = max(dp, key=lambda x: x[0])
     # 加上 0 费候选（必选）
-    total = best_dmg + sum(d for d, _, _, _ in zero_cost)
-    detail = [
-        {"name": n, "damage": d, "source": s, "windfury": wf}
-        for _, d, n, s, wf in best_chosen
-    ]
-    detail.extend(
-        {"name": n, "damage": d, "source": s, "windfury": wf}
-        for d, n, s, wf in zero_cost
-    )
+    total = best_dmg + sum(c.damage for c in zero_cost)
+    detail = [_candidate_detail(c) for c in best_chosen]
+    detail.extend(_candidate_detail(c) for c in zero_cost)
     return total, detail
 
 
@@ -237,6 +225,16 @@ def _board_minion_count(board: list[CardView]) -> int:
         elif not c.card_type and c.health is not None:
             count += 1
     return count
+
+
+class HandCandidate(NamedTuple):
+    """手牌中受法力约束的可打出伤害候选（法术/冲锋随从）。"""
+
+    cost: int
+    damage: int
+    name: str
+    source: str  # spell / charge
+    windfury: bool  # 冲锋随从风怒 → 可攻击两次（费用只付一次）
 
 
 def _min_clear_subset(

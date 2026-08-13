@@ -191,6 +191,19 @@ def _format_board(cards: list) -> list[str]:
     return lines
 
 
+def _fatigue_line(view: dict, is_opponent: bool) -> str | None:
+    """牌库空时返回疲劳伤害提示行；牌库未空返回 None。
+
+    抽牌疲劳 = 已疲劳次数 + 1（牌库空时下回合抽牌扣的血量）。
+    """
+    if (view.get("deck_count", 0) or 0) > 0:
+        return None
+    next_fatigue = (view.get("fatigue", 0) or 0) + 1
+    if is_opponent:
+        return f"对手牌库已空：其下回合抽牌将受 {next_fatigue} 点疲劳伤害。"
+    return f"牌库已空：下回合抽牌将受 {next_fatigue} 点疲劳伤害。"
+
+
 def build_user_prompt(
     snapshot: GameSnapshot,
     friendly_player_id: int,
@@ -233,9 +246,9 @@ def build_user_prompt(
     friendly_played = friendly.get("played_cards", [])
     if friendly_played:
         lines.append("已出牌：" + "、".join(c["name"] for c in friendly_played))
-    if (friendly.get("deck_count", 0) or 0) <= 0:
-        f = (friendly.get("fatigue", 0) or 0) + 1
-        lines.append(f"牌库已空：下回合抽牌将受 {f} 点疲劳伤害。")
+    fatigue_friendly = _fatigue_line(friendly, is_opponent=False)
+    if fatigue_friendly:
+        lines.append(fatigue_friendly)
 
     lines += [
         "",
@@ -263,12 +276,11 @@ def build_user_prompt(
                 f"对手场上奥秘 {opp_secrets} 个（标准池无此职业奥秘，"
                 "可能为发现/生成的奥秘）。"
             )
-    if (opponent.get("deck_count", 0) or 0) <= 0:
-        f = (opponent.get("fatigue", 0) or 0) + 1
-        lines.append(f"对手牌库已空：其下回合抽牌将受 {f} 点疲劳伤害。")
+    fatigue_opp = _fatigue_line(opponent, is_opponent=True)
+    if fatigue_opp:
+        lines.append(fatigue_opp)
 
-    lines += [""]
-    # 抽牌概率参考：牌库剩余 N 张时下回合抽到关键牌的概率（补 HDT 核心价值）
+    lines += [""]    # 抽牌概率参考：牌库剩余 N 张时下回合抽到关键牌的概率（补 HDT 核心价值）
     friendly_deck = friendly.get('deck_count', 0) or 0
     if friendly_deck > 0:
         from hscoach.probability import draw_odds_table

@@ -11,38 +11,12 @@ import unittest
 logging.disable(logging.WARNING)
 
 from hscoach.coach import build_user_prompt
-from hscoach.state import CardView, GameSnapshot, PlayerView
-
-logger = logging.getLogger(__name__)
-
-
-def _card(name="", attack=None, health=None, cost=0, flags=None, text=""):
-    return CardView(
-        card_id=None, name=name, cost=cost, attack=attack, health=health,
-        flags=flags or [], text=text,
-    )
-
-
-def _player(**kw):
-    defaults = dict(
-        health=30, armor=0, mana=10, max_mana=10, hand=[], hand_is_hidden=False,
-        board=[], deck_count=20,
-    )
-    defaults.update(kw)
-    return PlayerView(name="测试", hero=None, **defaults)
-
-
-def _opp(**kw):
-    defaults = dict(
-        health=30, armor=0, mana=10, max_mana=10, hand=4, hand_is_hidden=True,
-        board=[], deck_count=20,
-    )
-    defaults.update(kw)
-    return PlayerView(name="对手", hero=None, **defaults)
-
-
-def _snap(friendly, opponent):
-    return GameSnapshot(turn=6, current_player_id=1, players={1: friendly, 2: opponent})
+from tests._helpers import (
+    make_card as _card,
+    make_opp as _opp,
+    make_player as _player,
+    make_snapshot as _snap,
+)
 
 
 class TrackerInfoInPromptTest(unittest.TestCase):
@@ -86,7 +60,9 @@ class TrackerInfoInPromptTest(unittest.TestCase):
         self.assertIn("2", prompt)
 
     def test_no_fatigue_when_decks_remain(self):
-        prompt = build_user_prompt(_snap(_player(), _opp()), friendly_player_id=1)
+        prompt = build_user_prompt(
+            _snap(_player(deck_count=20), _opp(deck_count=20)), friendly_player_id=1
+        )
         self.assertNotIn("疲劳", prompt)
 
 

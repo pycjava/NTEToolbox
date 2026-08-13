@@ -20,7 +20,6 @@ from pathlib import Path
 
 HISTORY_FILENAME = "history.jsonl"
 STATS_FILENAME = "stats.json"
-RECENT_LIMIT = 10
 
 # 终局 PLAYSTATE 的枚举名 → 战绩（真实 Power.log 写枚举名 WON/LOST/TIED，
 # 不是数字 4/5/6；进行中的 PLAYING/WINNING/LOSING 不在此表 → 被忽略）。
@@ -123,8 +122,6 @@ def _aggregate(history_path: Path) -> dict:
         "losses": 0,
         "ties": 0,
         "winrate_pct": 0.0,
-        "by_class": {},
-        "recent": [],
     }
     if not history_path.exists():
         return stats
@@ -145,13 +142,6 @@ def _aggregate(history_path: Path) -> dict:
             stats["losses"] += 1
         else:
             stats["ties"] += 1
-        cls = e.get("friendly_class") or "未知"
-        bucket = stats["by_class"].setdefault(cls, {"wins": 0, "losses": 0})
-        if result == "win":
-            bucket["wins"] += 1
-        elif result == "loss":
-            bucket["losses"] += 1
-    stats["recent"] = entries[-RECENT_LIMIT:]
     if stats["total"]:
         stats["winrate_pct"] = round(stats["wins"] / stats["total"] * 100, 1)
     return stats

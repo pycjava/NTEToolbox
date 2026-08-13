@@ -12,33 +12,12 @@
 import unittest
 
 from hscoach.lethal import compute_lethal
-from hscoach.state import CardView, GameSnapshot, PlayerView
-
-
-def _card(name="", attack=None, health=None, cost=0, flags=None, text="", card_id=None, card_type=""):
-    return CardView(
-        card_id=card_id, name=name, cost=cost, attack=attack, health=health,
-        flags=flags or [], text=text, card_type=card_type,
-    )
-
-
-def _player(health=30, armor=0, mana=10, max_mana=10, hand=None, board=None):
-    return PlayerView(
-        name="测试", hero=None, health=health, armor=armor, mana=mana,
-        max_mana=max_mana, hand=hand or [], hand_is_hidden=False,
-        board=board or [], deck_count=0,
-    )
-
-
-def _opp(health=30, armor=0):
-    return PlayerView(
-        name="对手", hero=None, health=health, armor=armor, mana=10,
-        max_mana=10, hand=4, hand_is_hidden=True, board=[], deck_count=0,
-    )
-
-
-def _snap(friendly, opponent):
-    return GameSnapshot(turn=6, current_player_id=1, players={1: friendly, 2: opponent})
+from tests._helpers import (
+    make_card as _card,
+    make_opp as _opp,
+    make_player as _player,
+    make_snapshot as _snap,
+)
 
 
 class ChargeMinionInHandTest(unittest.TestCase):

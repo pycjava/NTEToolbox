@@ -21,8 +21,6 @@ from hscoach.history import (
 )
 from tests._helpers import read_fixture_lines
 
-logger = logging.getLogger(__name__)
-
 
 def _playstate_lines(entity: str, value: str) -> list[str]:
     """构造真实 Power.log 形态的 PLAYSTATE 行（玩家实体 + 枚举名）。"""
@@ -152,23 +150,6 @@ class RecordResultTest(unittest.TestCase):
             self.assertTrue(path.exists())
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(data["total"], 1)
-
-    def test_by_class_aggregation(self):
-        with tempfile.TemporaryDirectory() as td:
-            record_result(Path(td), "win", "MAGE", "WARLOCK", turns=10)
-            record_result(Path(td), "loss", "MAGE", "HUNTER", turns=8)
-            stats = record_result(Path(td), "win", "HUNTER", "MAGE", turns=7)
-            self.assertEqual(stats["by_class"]["MAGE"]["wins"], 1)
-            self.assertEqual(stats["by_class"]["MAGE"]["losses"], 1)
-            self.assertEqual(stats["by_class"]["HUNTER"]["wins"], 1)
-
-    def test_recent_kept_bounded(self):
-        with tempfile.TemporaryDirectory() as td:
-            for i in range(15):
-                record_result(Path(td), "win" if i % 2 == 0 else "loss", "MAGE", "WARLOCK", turns=i + 1)
-            stats = json.loads((Path(td) / STATS_FILENAME).read_text(encoding="utf-8"))
-            self.assertEqual(stats["total"], 15)
-            self.assertLessEqual(len(stats["recent"]), 10)
 
 
 if __name__ == "__main__":
