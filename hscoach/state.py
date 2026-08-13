@@ -25,7 +25,7 @@ import logging
 from dataclasses import dataclass, field
 
 from hscoach.cards import Card, CardDatabase
-from hearthstone.enums import GameTag, Zone
+from hearthstone.enums import CardType, GameTag, Zone
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,8 @@ class CardView:
     flags: list[str] = field(default_factory=list)
     text: str = ""  # 卡牌效果（来自卡牌库，非模型记忆）
     damaged: int = 0  # 受伤减血（在场随从上）
+    card_type: str = ""  # 实体类型名（MINION/SPELL/HERO/WEAPON...，用于随从位等判断）
+    card_class: str = ""  # 职业（来自卡牌库，用于奥秘池等按职业的推断）
 
     def to_dict(self) -> dict:
         return {
@@ -76,6 +78,8 @@ class CardView:
             "flags": self.flags,
             "text": self.text,
             "damaged": self.damaged or None,
+            "card_type": self.card_type or None,
+            "card_class": self.card_class or None,
         }
 
 
@@ -93,6 +97,10 @@ class PlayerView:
     hand_is_hidden: bool  # True=对手（只见数量）
     board: list[CardView]
     deck_count: int
+    fatigue: int = 0  # 已受疲劳伤害次数（FATIGUE tag；牌库空时抽牌扣 fatigue+1）
+    played_cards: list[CardView] = field(default_factory=list)  # 坟场（已出牌，公开）
+    secrets: int = 0  # 场上奥秘数量（对手无 CardID，只计数）
+    possible_secrets: list[str] = field(default_factory=list)  # 对手可能奥秘池（按职业）
 
     def to_dict(self) -> dict:
         hand: object
@@ -109,6 +117,10 @@ class PlayerView:
             "hand": hand,
             "board": [c.to_dict() for c in self.board],
             "deck_count": self.deck_count,
+            "fatigue": self.fatigue,
+            "played_cards": [c.to_dict() for c in self.played_cards],
+            "secrets": self.secrets,
+            "possible_secrets": self.possible_secrets,
         }
 
 
@@ -143,17 +155,28 @@ def _entity_to_cardview(entity, db: CardDatabase | None) -> CardView:
     card_id = getattr(entity, "card_id", None)
     name = card_id or "未知卡牌"
     text = ""
+    card_class = ""
     if card_id and db is not None:
         card: Card | None = db.get(card_id)
         if card is not None:
             name = card.name
             text = card.text
+            card_class = card.card_class
 
     # 基础属性
     cost = tags.get(GameTag.COST)
     attack = tags.get(GameTag.ATK)
     health = tags.get(GameTag.HEALTH)
     damaged = tags.get(GameTag.DAMAGE, 0) or 0
+
+    # 实体类型名（CardType 枚举名；未知/非法值回退空串）
+    card_type = ""
+    ct = tags.get(GameTag.CARDTYPE)
+    if ct is not None:
+        try:
+            card_type = CardType(ct).name
+        except ValueError:
+            card_type = ""
 
     return CardView(
         card_id=card_id,
@@ -164,6 +187,8 @@ def _entity_to_cardview(entity, db: CardDatabase | None) -> CardView:
         flags=_extract_flags(tags),
         text=text,
         damaged=damaged,
+        card_type=card_type,
+        card_class=card_class,
     )
 
 
@@ -289,6 +314,33 @@ def serialize_game(game, friendly_player_id: int, db: CardDatabase | None = None
         ]
         deck_count = len(deck_entities)
 
+        # 疲劳计数（FATIGUE tag；牌库空时抽牌扣 fatigue+1）
+        fatigue = player.tags.get(GameTag.FATIGUE, 0) or 0
+
+        # 坟场（双方已出牌：公开信息，D9 只禁对手手牌不涉坟场）
+        graveyard_entities = [
+            e for e in game.in_zone(Zone.GRAVEYARD)
+            if e.tags.get(GameTag.CONTROLLER) == pid
+        ]
+        played = [_entity_to_cardview(e, db) for e in graveyard_entities]
+
+        # 奥秘：只计数（对手奥秘无 CardID，隐藏信息不可读）
+        secrets = sum(
+            1
+            for e in game.in_zone(Zone.SECRET)
+            if e.tags.get(GameTag.CONTROLLER) == pid
+        )
+
+        # 对手可能奥秘池：按英雄职业圈定标准年卡包内的奥秘（数据驱动）
+        possible_secrets: list[str] = []
+        if not is_friendly and secrets and db is not None:
+            if hero_cv is not None and hero_cv.card_class:
+                from hscoach.secrets import possible_secrets as pool
+
+                possible_secrets = [
+                    c.name for c in pool(db.iter_cards(), hero_cv.card_class)
+                ]
+
         players_view[pid] = PlayerView(
             name=getattr(player, "name", None) or f"玩家{pid}",
             hero=hero_cv,
@@ -300,6 +352,10 @@ def serialize_game(game, friendly_player_id: int, db: CardDatabase | None = None
             hand_is_hidden=hand_is_hidden,
             board=board,
             deck_count=deck_count,
+            fatigue=fatigue,
+            played_cards=played,
+            secrets=secrets,
+            possible_secrets=possible_secrets,
         )
 
     return GameSnapshot(

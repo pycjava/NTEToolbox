@@ -18,6 +18,7 @@ from hscoach.advice_worker import AdviceDispatcher, AdviceJob
 from hscoach.cards import CardDatabase
 from hscoach.coach import DeepSeekClient
 from hscoach.config import effective_config, save_config
+from hscoach.history import GameResultDetector, record_result
 from hscoach.log_config import ensure_log_config, power_log_path, tail_power_log
 from hscoach.log_parser import parse_power_log, parse_power_log_file
 from hscoach.overlay import OverlayApp
@@ -211,6 +212,7 @@ def _run(args, cfg, publish_dir: Path) -> int:
         friendly_player_id=friendly_player_id, coach_mode=cfg.coach_mode
     )
     detector = IncrementalTurnDetector(friendly_player_id=friendly_player_id)
+    result_detector = GameResultDetector()  # 对局终局（PLAYSTATE）→ 战绩统计
 
     # 4. 后台线程：增量 tail → 正则检测回合 → 全量解析 → 校准 → LLM（优化 2+3）
     stop_event = threading.Event()
@@ -274,7 +276,38 @@ def _run(args, cfg, publish_dir: Path) -> int:
             # 每攒一批（或遇到 TAG_CHANGE）检测一次
             if len(batch) >= 50 or "TAG_CHANGE" in line:
                 triggered_turns = detector.feed(batch)
+                results = result_detector.feed(batch)
                 batch.clear()
+                for result in results:
+                    # 对局终局：记录战绩（history.jsonl + stats.json，供前端盒子）
+                    try:
+                        res = parse_power_log(detector.get_all_lines())
+                        apply_calibration(res)
+                        if res.games:
+                            game = res.games[-1]
+                            snap = serialize_game(
+                                game, trigger.friendly_player_id, db
+                            )
+                            friendly_class = opponent_class = ""
+                            for pid, pv in snap.players.items():
+                                if pv.hero and pv.hero.card_class:
+                                    if pid == trigger.friendly_player_id:
+                                        friendly_class = pv.hero.card_class
+                                    else:
+                                        opponent_class = pv.hero.card_class
+                            stats = record_result(
+                                publish_dir, result, friendly_class,
+                                opponent_class, snap.turn,
+                            )
+                            logger.info(
+                                "对局结束：%s（T%d，%s vs %s）→ "
+                                "战绩 %d胜%d负（胜率 %s%%）",
+                                result, snap.turn, friendly_class,
+                                opponent_class, stats["wins"],
+                                stats["losses"], stats["winrate_pct"],
+                            )
+                    except Exception as e:  # 战绩记录失败不致命
+                        logger.warning("对局结果记录失败（非致命）：%s", e)
                 for turn in triggered_turns:
                     # 检测到"轮到友方新回合" → 按触发点截取行流全量解析
                     # → 校准 → 序列化快照 → submit 给调度器（不在此阻塞调 LLM）

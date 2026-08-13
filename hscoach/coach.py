@@ -228,6 +228,16 @@ def build_user_prompt(
 
     lines += [
         f"牌库剩余：{friendly.get('deck_count', 0)} 张",
+    ]
+    # 记牌器信息（T-S2，全公开）：我方已出牌 + 疲劳
+    friendly_played = friendly.get("played_cards", [])
+    if friendly_played:
+        lines.append("已出牌：" + "、".join(c["name"] for c in friendly_played))
+    if (friendly.get("deck_count", 0) or 0) <= 0:
+        f = (friendly.get("fatigue", 0) or 0) + 1
+        lines.append(f"牌库已空：下回合抽牌将受 {f} 点疲劳伤害。")
+
+    lines += [
         "",
         "【对手】",
         f"英雄：{opponent.get('health', '?')} 血 {opponent.get('armor', 0)} 护甲",
@@ -238,8 +248,26 @@ def build_user_prompt(
 
     lines += [
         f"对手牌库剩余：{opponent.get('deck_count', 0)} 张",
-        "",
     ]
+    # 记牌器信息（T-S2，全公开）：对手已出牌 / 场上奥秘池 / 疲劳
+    opp_played = opponent.get("played_cards", [])
+    if opp_played:
+        lines.append("对手已出牌：" + "、".join(c["name"] for c in opp_played))
+    opp_secrets = opponent.get("secrets", 0) or 0
+    if opp_secrets:
+        pool = opponent.get("possible_secrets", []) or []
+        if pool:
+            lines.append(f"对手场上奥秘 {opp_secrets} 个，可能为：{'、'.join(pool)}。")
+        else:
+            lines.append(
+                f"对手场上奥秘 {opp_secrets} 个（标准池无此职业奥秘，"
+                "可能为发现/生成的奥秘）。"
+            )
+    if (opponent.get("deck_count", 0) or 0) <= 0:
+        f = (opponent.get("fatigue", 0) or 0) + 1
+        lines.append(f"对手牌库已空：其下回合抽牌将受 {f} 点疲劳伤害。")
+
+    lines += [""]
     # 抽牌概率参考：牌库剩余 N 张时下回合抽到关键牌的概率（补 HDT 核心价值）
     friendly_deck = friendly.get('deck_count', 0) or 0
     if friendly_deck > 0:

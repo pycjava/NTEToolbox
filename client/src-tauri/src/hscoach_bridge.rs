@@ -26,7 +26,7 @@ const PROCESS_FORCE_STOP_TIMEOUT_MS: u64 = 3_000;
 const DEFAULT_MODEL: &str = "deepseek-chat";
 const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/v1";
 
-/// 前端轮询的状态快照：进程状态 + 最新建议 + 最新对局快照。
+/// 前端轮询的状态快照：进程状态 + 最新建议 + 最新对局快照 + 战绩。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HsCoachStateSnapshot {
@@ -34,6 +34,8 @@ pub struct HsCoachStateSnapshot {
     pub exit_code: Option<i32>,
     pub advice: Option<Value>,
     pub game_state: Option<Value>,
+    /// 战绩统计（stats.json，由 hscoachd 在对局结束时聚合写入）。
+    pub stats: Option<Value>,
 }
 
 /// 与 Python hscoach.config.CoachConfig 完全一致的字段（snake_case，共享文件）。
@@ -265,6 +267,7 @@ impl HsCoachRuntime {
             exit_code,
             advice: read_json_file(&publish_dir.join(ADVICE_FILENAME)),
             game_state: read_json_file(&publish_dir.join(GAME_STATE_FILENAME)),
+            stats: read_json_file(&publish_dir.join("stats.json")),
         })
     }
 

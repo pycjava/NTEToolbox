@@ -15,10 +15,10 @@ from hscoach.lethal import compute_lethal
 from hscoach.state import CardView, GameSnapshot, PlayerView
 
 
-def _card(name="", attack=None, health=None, cost=0, flags=None, text="", card_id=None):
+def _card(name="", attack=None, health=None, cost=0, flags=None, text="", card_id=None, card_type=""):
     return CardView(
         card_id=card_id, name=name, cost=cost, attack=attack, health=health,
-        flags=flags or [], text=text,
+        flags=flags or [], text=text, card_type=card_type,
     )
 
 
@@ -111,6 +111,29 @@ class EquippedWeaponTest(unittest.TestCase):
         opp = _opp(health=7)
         check = compute_lethal(_snap(friendly, opp))
         self.assertEqual(check.available_damage, 7)
+
+    def test_weapon_entity_not_double_counted_with_hero(self):
+        """英雄实体 ATK 已含武器攻击；武器实体不再重复计入（防误报斩杀）。
+
+        真实日志：武器装备后英雄实体 ATK=武器攻击，同时武器实体也在
+        PLAY zone 带 ATK——两个都算会把武器攻击翻倍，可能误报斩杀。
+        """
+        hero = _card(name="古尔丹", attack=3, health=30, card_type="HERO")
+        weapon = _card(name="奥金斧", attack=3, health=None, card_type="WEAPON")
+        friendly = _player(board=[hero, weapon])
+        opp = _opp(health=3)
+        check = compute_lethal(_snap(friendly, opp))
+        self.assertEqual(check.available_damage, 3)
+        self.assertTrue(check.lethal)
+
+    def test_hero_attack_without_weapon_entity_counts(self):
+        """只有英雄实体（ATK 来自武器/技能）时照常计入。"""
+        hero = _card(name="古尔丹", attack=4, health=30, card_type="HERO")
+        friendly = _player(board=[hero])
+        opp = _opp(health=4)
+        check = compute_lethal(_snap(friendly, opp))
+        self.assertEqual(check.available_damage, 4)
+        self.assertTrue(check.lethal)
 
 
 if __name__ == "__main__":

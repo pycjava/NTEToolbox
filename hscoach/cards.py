@@ -80,6 +80,7 @@ class Card:
     health: int | None
     type: str  # MINION / SPELL / WEAPON / HERO / ...
     card_class: str
+    card_set: str = ""  # 所属卡包（如 CORE / EMERALD_DREAM，用于标准池过滤）
 
 
 class CardDatabase:
@@ -156,6 +157,7 @@ class CardDatabase:
                     health=entry.get("health"),
                     type=entry.get("type", ""),
                     card_class=entry.get("cardClass", ""),
+                    card_set=entry.get("set", ""),
                 )
 
         # 先加载全卡（含教程卡等非收集卡），再用收集卡覆盖
@@ -169,6 +171,12 @@ class CardDatabase:
         if not self._loaded:
             self.build()
         return self._cards.get(card_id)
+
+    def iter_cards(self) -> list[Card]:
+        """遍历全部卡牌（奥秘池等需要全表扫描的场景）。"""
+        if not self._loaded:
+            self.build()
+        return list(self._cards.values())
 
     def __contains__(self, card_id: str) -> bool:
         if not self._loaded:
