@@ -19,67 +19,90 @@ from hscoach.history import (
     GameResultDetector,
     record_result,
 )
+from tests._helpers import read_fixture_lines
 
 logger = logging.getLogger(__name__)
 
 
+def _playstate_lines(entity: str, value: str) -> list[str]:
+    """构造真实 Power.log 形态的 PLAYSTATE 行（玩家实体 + 枚举名）。"""
+    return [
+        "GameState.DebugPrintPower() -     TAG_CHANGE "
+        f"Entity={entity} tag=PLAYSTATE value={value}"
+    ]
+
+
 class GameResultDetectorTest(unittest.TestCase):
-    """PLAYSTATE 检测：只认 GameEntity 上的 4/5/6，每局只记一次。"""
+    """PLAYSTATE 终局检测（真实日志格式）。
 
-    def test_detects_win(self):
-        det = GameResultDetector()
-        self.assertEqual(
-            det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4"]),
-            ["win"],
+    真实 Power.log 把 PLAYSTATE 写在【玩家实体】（PlayerOne/PlayerTwo 或
+    数字 2/3），值是【枚举名】WON/LOST/TIED（非数字 4/5/6），且双方各写
+    一次。检测器必须按 friendly_player_id 取【友方】实体的结果。
+    """
+
+    def test_real_format_win_attributed_to_friendly(self):
+        det = GameResultDetector(friendly_player_id=1)
+        out = det.feed(_playstate_lines("PlayerOne", "WON") + _playstate_lines("PlayerTwo", "LOST"))
+        self.assertEqual(out, ["win"])
+
+    def test_real_format_loss_attributed_to_friendly(self):
+        det = GameResultDetector(friendly_player_id=1)
+        out = det.feed(_playstate_lines("PlayerOne", "LOST") + _playstate_lines("PlayerTwo", "WON"))
+        self.assertEqual(out, ["loss"])
+
+    def test_result_follows_friendly_id_swap(self):
+        """friendly=2 时取 PlayerTwo 的结果（修复前取首个命中会记反）。"""
+        det = GameResultDetector(friendly_player_id=2)
+        out = det.feed(_playstate_lines("PlayerOne", "LOST") + _playstate_lines("PlayerTwo", "WON"))
+        self.assertEqual(out, ["win"])
+
+    def test_numeric_entity_resolves_via_protocol_constant(self):
+        """数字实体：Entity=2→玩家1（协议常量 EntityID 2=先手）。"""
+        det1 = GameResultDetector(friendly_player_id=1)
+        self.assertEqual(det1.feed(_playstate_lines("2", "WON")), ["win"])
+        # entity 3 = 玩家2 = 对手 → 友方无终局行 → 空
+        det2 = GameResultDetector(friendly_player_id=1)
+        self.assertEqual(det2.feed(_playstate_lines("3", "WON")), [])
+
+    def test_ignores_non_terminal_playstates(self):
+        """PLAYING/WINNING/LOSING 是进行中状态，不是终局。"""
+        det = GameResultDetector(friendly_player_id=1)
+        out = det.feed(
+            _playstate_lines("PlayerOne", "PLAYING")
+            + _playstate_lines("PlayerOne", "WINNING")
+            + _playstate_lines("PlayerOne", "LOSING")
         )
+        self.assertEqual(out, [])
 
-    def test_detects_loss_and_tie(self):
-        det = GameResultDetector()
-        self.assertEqual(det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=5"]), ["loss"])
-        det.reset()  # 下一局
-        self.assertEqual(det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=6"]), ["tie"])
-
-    def test_ignores_playing_states(self):
-        """对局中的 1/2/3（进行中/即将胜/即将负）不是终局结果。"""
-        det = GameResultDetector()
-        self.assertEqual(
-            det.feed([
-                "TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=1",
-                "TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=2",
-                "TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=3",
-            ]),
-            [],
-        )
-
-    def test_ignores_non_game_entity_lines(self):
-        """其他实体上的 PLAYSTATE（如玩家实体）不是对局结果。"""
-        det = GameResultDetector()
-        self.assertEqual(
-            det.feed(["TAG_CHANGE Entity=3 tag=PLAYSTATE value=4"]),
-            [],
-        )
+    def test_ignores_when_only_opponent_has_terminal_line(self):
+        det = GameResultDetector(friendly_player_id=1)
+        self.assertEqual(det.feed(_playstate_lines("PlayerTwo", "WON")), [])
 
     def test_single_fire_per_game(self):
-        """同一局重复写 PLAYSTATE 只记一次。"""
-        det = GameResultDetector()
-        self.assertEqual(det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4"]), ["win"])
-        self.assertEqual(det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4"]), [])
+        det = GameResultDetector(friendly_player_id=1)
+        self.assertEqual(det.feed(_playstate_lines("PlayerOne", "WON")), ["win"])
+        self.assertEqual(det.feed(_playstate_lines("PlayerOne", "WON")), [])
 
     def test_create_game_resets_for_next_match(self):
-        """CREATE_GAME 开启新对局 → 下一局结果可再次触发。"""
-        det = GameResultDetector()
-        lines = [
-            "TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4",
-            "CREATE_GAME",
-            "TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=5",
-        ]
-        self.assertEqual(det.feed(lines), ["win", "loss"])
+        det = GameResultDetector(friendly_player_id=1)
+        det.feed(_playstate_lines("PlayerOne", "LOST"))
+        out = det.feed(["GameState... CREATE_GAME - ..."] + _playstate_lines("PlayerOne", "WON"))
+        self.assertEqual(out, ["win"])
 
     def test_reset_method(self):
-        det = GameResultDetector()
-        det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4"])
+        det = GameResultDetector(friendly_player_id=1)
+        det.feed(_playstate_lines("PlayerOne", "WON"))
         det.reset()
-        self.assertEqual(det.feed(["TAG_CHANGE Entity=GameEntity tag=PLAYSTATE value=4"]), ["win"])
+        self.assertEqual(det.feed(_playstate_lines("PlayerOne", "WON")), ["win"])
+
+
+class RealFixtureGameResultTest(unittest.TestCase):
+    """真实 fixture 端到端回归：PlayerOne（玩家1=friendly）= LOST。"""
+
+    def test_detects_friendly_loss_from_real_log(self):
+        det = GameResultDetector(friendly_player_id=1)
+        results = det.feed(read_fixture_lines())
+        self.assertEqual(results, ["loss"])
 
 
 class RecordResultTest(unittest.TestCase):

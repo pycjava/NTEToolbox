@@ -212,7 +212,7 @@ def _run(args, cfg, publish_dir: Path) -> int:
         friendly_player_id=friendly_player_id, coach_mode=cfg.coach_mode
     )
     detector = IncrementalTurnDetector(friendly_player_id=friendly_player_id)
-    result_detector = GameResultDetector()  # 对局终局（PLAYSTATE）→ 战绩统计
+    result_detector = GameResultDetector(friendly_player_id=friendly_player_id)  # 对局终局（PLAYSTATE）→ 战绩统计
 
     # 4. 后台线程：增量 tail → 正则检测回合 → 全量解析 → 校准 → LLM（优化 2+3）
     stop_event = threading.Event()
@@ -233,6 +233,7 @@ def _run(args, cfg, publish_dir: Path) -> int:
                 logger.info("自动校准：友方玩家 id = %d", calibrated)
             trigger.friendly_player_id = calibrated
             detector.friendly_player_id = calibrated
+            result_detector.friendly_player_id = calibrated
 
     # LLM 建议调度器：把"调 LLM → 发布 advice.json"这条慢路径从 log_worker
     # 剥离到独立线程，避免 LLM 慢（超时 120s）反噬日志读取与记牌器快照。
