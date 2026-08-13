@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Eye,
@@ -60,6 +60,10 @@ type HsPlayerState = {
   board: Array<{ name: string }>;
   deck_count: number;
   draw_odds?: { one_copy_next_draw: number; two_copy_next_draw: number };
+  fatigue?: number;
+  played_cards?: Array<{ name: string }>;
+  secrets?: number;
+  possible_secrets?: string[];
 };
 
 type HsGameStatePayload = {
@@ -70,11 +74,20 @@ type HsGameStatePayload = {
   players: Record<string, HsPlayerState>;
 };
 
+type HsStats = {
+  total: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  winrate_pct: number;
+};
+
 type HsStateSnapshot = {
   runState: HsRunState;
   exitCode?: number | null;
   advice: HsAdvicePayload | null;
   gameState: HsGameStatePayload | null;
+  stats?: HsStats | null;
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -253,8 +266,15 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
     onRefreshWindows(game.id);
   }, [game.id, onRefreshWindows]);
 
-  // 挂载即枚举一次窗口列表：跟随窗口下拉不依赖用户手动点刷新
+  // 挂载即枚举一次窗口列表：跟随窗口下拉不依赖用户手动点刷新。
+  // 只跑首轮（ref 卡住）：父组件（App）每次重渲染都会创建新的内联
+  // onRefreshWindows 回调，若把该回调放进 effect 依赖会形成
+  // "枚举 → 父 setState → 重渲染 → 再枚举"的无限循环（CPU 打满、
+  // vitest 挂死）——回归见 HsCoachPanel.test.tsx "mount enumeration"。
+  const initialRefreshDone = useRef(false);
   useEffect(() => {
+    if (initialRefreshDone.current) return;
+    initialRefreshDone.current = true;
     handleRefreshWindows();
   }, [handleRefreshWindows]);
 
@@ -282,6 +302,12 @@ export default function HsCoachPanel({ game, onTargetWindowChange, onRefreshWind
         <p className="hs-card-hint">
           启动后监听炉石 Power.log：回合开始时生成出牌建议，实时发布对局快照（仅本地可见信息，不读取对手手牌）。
         </p>
+        {snapshot?.stats && snapshot.stats.total > 0 ? (
+          <p className="hs-card-hint hs-stats">
+            战绩：对局 {snapshot.stats.total} · 胜 {snapshot.stats.wins} · 负 {snapshot.stats.losses}
+            {snapshot.stats.ties > 0 ? ` · 平 ${snapshot.stats.ties}` : ""} · 胜率 {snapshot.stats.winrate_pct}%
+          </p>
+        ) : null}
         <div className="hs-actions">
           {isRunning ? (
             <button className="secondary-action danger" type="button" onClick={() => { void handleRunChange("idle"); }}>
@@ -495,6 +521,16 @@ function HsPlayerSummary({ title, player, current }: { title: string; player?: H
   }
 
   const handLabel = Array.isArray(player.hand) ? `${player.hand.length} 张` : `${player.hand.count} 张`;
+  const played = player.played_cards ?? [];
+  const playedLabel = played
+    .slice(0, 6)
+    .map((card) => card.name)
+    .join("、") + (played.length > 6 ? ` 等 ${played.length} 张` : "");
+  const secrets = player.secrets ?? 0;
+  const secretPool = player.possible_secrets ?? [];
+  const poolLabel = secretPool
+    .slice(0, 5)
+    .join("、") + (secretPool.length > 5 ? "…" : "");
 
   return (
     <div className={`hs-player ${current ? "current" : ""}`}>
@@ -507,10 +543,19 @@ function HsPlayerSummary({ title, player, current }: { title: string; player?: H
       </span>
       <span className="hs-player-meta">
         手牌 {handLabel} · 牌库 {player.deck_count} · 场面 {player.board.length}
+        {player.fatigue ? ` · 疲劳 ${player.fatigue}` : ""}
       </span>
       {player.draw_odds ? (
         <span className="hs-player-meta hs-draw-odds">
           下回合抽：单张 {Math.round(player.draw_odds.one_copy_next_draw * 100)}% · 两张之一 {Math.round(player.draw_odds.two_copy_next_draw * 100)}%
+        </span>
+      ) : null}
+      {played.length > 0 ? (
+        <span className="hs-player-meta hs-played-cards">已出牌：{playedLabel}</span>
+      ) : null}
+      {secrets > 0 ? (
+        <span className="hs-player-meta hs-secrets">
+          奥秘 ×{secrets}{poolLabel ? `（可能：${poolLabel}）` : ""}
         </span>
       ) : null}
     </div>
