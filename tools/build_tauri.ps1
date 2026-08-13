@@ -329,7 +329,12 @@ Write-Host "[4/6] Building Python agent ..." -ForegroundColor Cyan
 
 Set-Location $repoRoot
 
-Invoke-Step $pythonCommand ($pythonArguments + @("-m", "pip", "install", "-e", ".", "pyinstaller"))
+# 安装运行时依赖：
+# - 基础依赖（agent 用 maafw/music21）
+# - hearthstone extra（hscoachd 用 hslog/httpx/hearthstone）
+#   缺失 extra 会让 PyInstaller 打包 hscoachd 时漏掉 httpx/hslog 等模块，
+#   客户端拉起 hscoachd 即秒退（exit code 1），表现为「教练一直启动中」。
+Invoke-Step $pythonCommand ($pythonArguments + @("-m", "pip", "install", "-e", '.[hearthstone]', "pyinstaller"))
 Invoke-Step $pythonCommand ($pythonArguments + @(".\tools\build_agent.py"))
 
 # 清理 pip install -e . 生成的 .egg-info 目录

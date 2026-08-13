@@ -202,7 +202,7 @@ Test-Path .\deps\bin\MaaPiCli.exe
 
 ```powershell
 python -m pip install -U pip
-python -m pip install -e . pyinstaller
+python -m pip install -e ".[hearthstone]" pyinstaller
 python .\tools\configure.py
 ```
 
@@ -211,7 +211,7 @@ python .\tools\configure.py
 如果系统里有多个 Python 版本，建议明确使用 3.14：
 
 ```powershell
-py -3.14 -m pip install -e . pyinstaller
+py -3.14 -m pip install -e ".[hearthstone]" pyinstaller
 py -3.14 .\tools\configure.py
 ```
 
@@ -414,7 +414,7 @@ corepack prepare pnpm@11.3.0 --activate
 
 ```powershell
 py -3.14 --version
-py -3.14 -m pip install -e . pyinstaller
+py -3.14 -m pip install -e ".[hearthstone]" pyinstaller
 ```
 
 #### 直接 `pnpm tauri build` 后，安装包仍要求用户安装 Python

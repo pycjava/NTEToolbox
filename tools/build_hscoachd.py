@@ -10,8 +10,26 @@ sys.executable 同目录 data/ 读取）。
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 from pathlib import Path
+
+# hscoachd 的三方运行时依赖（与 pyproject.toml 的 hearthstone extra 对应）。
+# 打包前必须可导入，否则 PyInstaller 会静默跳过 import httpx / hslog /
+# hearthstone，产物 hscoachd.exe 启动即秒退（exit code 1）。
+RUNTIME_DEPENDENCIES = ("httpx", "hslog", "hearthstone")
+
+
+def verify_runtime_dependencies() -> None:
+    """打包前校验运行时依赖，缺失即给出明确安装指引并退出。"""
+    missing = [name for name in RUNTIME_DEPENDENCIES if importlib.util.find_spec(name) is None]
+    if missing:
+        raise SystemExit(
+            "hscoachd 打包缺少运行时依赖: "
+            + ", ".join(missing)
+            + "\n请先安装 hearthstone 依赖组后重试:\n"
+            + '    pip install -e ".[hearthstone]"'
+        )
 
 
 def build_pyinstaller_args(root: Path | str | None = None) -> list[str]:
@@ -60,6 +78,7 @@ def main(argv: object | None = None) -> None:
     from PyInstaller.__main__ import run
 
     project_root = Path(__file__).resolve().parents[1]
+    verify_runtime_dependencies()
     run(build_pyinstaller_args(project_root))
     bundle_card_database(project_root)
     print(f"hscoachd 就绪: {project_root / 'dist' / 'hscoachd'}")
