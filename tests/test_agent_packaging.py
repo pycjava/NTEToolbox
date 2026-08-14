@@ -85,8 +85,11 @@ class AgentPackagingTest(unittest.TestCase):
         script = (ROOT / "tools" / "build_tauri.ps1").read_text(encoding="utf-8")
 
         self.assertIn('Join-Path $repoRoot "dist\\agent.exe"', script)
+        # pip install 必须带 hearthstone extra（hslog/httpx/hearthstone）：
+        # 缺失时 PyInstaller 静默漏打模块，hscoachd.exe 启动即崩 exit 1
+        # （真实回归：教练一直"启动中"、无任何建议）。
         self.assertIn(
-            'Invoke-Step $pythonCommand ($pythonArguments + @("-m", "pip", "install", "-e", ".", "pyinstaller"))',
+            """Invoke-Step $pythonCommand ($pythonArguments + @("-m", "pip", "install", "-e", '.[hearthstone]', "pyinstaller"))""",
             script,
         )
         self.assertIn(
