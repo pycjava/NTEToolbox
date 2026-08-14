@@ -33,6 +33,9 @@ Source   = "https://github.com/op200/NTEToolbox"
 hearthstone = [
     "hslog>=1.19.0",
     "httpx>=0.27",
+    # hslog 会传递依赖 hearthstone，但 hscoach 代码直接 import
+    # hearthstone.enums，故显式声明，避免依赖链变化时漏装。
+    "hearthstone>=9.0.0",
 ]
 # 开发/测试工具（非运行时依赖）：tools/patch_test_manifest.py（sandbox 专用
 # Rust 测试 helper）需要 pefile 解析/改写 PE 资源。安装：pip install -e ".[dev]"

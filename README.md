@@ -317,7 +317,7 @@ pnpm tauri dev
 
 - `deps\bin\MaaPiCli.exe`
 - `assets\resource`
-- Python 依赖：`python -m pip install -e .`
+- Python 依赖：`python -m pip install -e ".[hearthstone]"`
 - OCR 模型：`python .\tools\configure.py`
 
 如果已经存在 `dist\agent.exe`，开发运行时会优先使用打包后的 agent；否则会使用源码目录和本机 Python 环境。

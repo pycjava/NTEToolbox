@@ -27,11 +27,22 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $distDir = Join-Path $repoRoot "dist"
 $appDir = Join-Path $distDir "HsCoach"
 
-# 1. 依赖就绪：hslog/httpx（本项目运行时依赖）+ PyInstaller
-# 注意：不要写 "hslog>=1.19.0" 这类带 > 的参数——PowerShell 5.1 会把
-# 原生命令参数里的 > 当成重定向，在 CWD 生成一个 "0.27" 垃圾文件。
-Invoke-Step "python" @("-m", "pip", "install", "hslog", "httpx")
+# 1. 依赖就绪：base + hearthstone extra（本项目运行时依赖）+ PyInstaller。
+#    统一走 pyproject.toml 的 extra，与 build_tauri.ps1 一致，显式装齐
+#    hslog/httpx/hearthstone（hearthstone 由 hslog 传递，但代码直接
+#    import hearthstone.enums，故用 extra 一并兜住，避免漏装）。
+#    注意：不要写 "hslog>=1.19.0" 这类带 > 的参数——PowerShell 5.1 会把
+#    原生命令参数里的 > 当成重定向，在 CWD 生成一个 "0.27" 垃圾文件。
+Set-Location $repoRoot
+Invoke-Step "python" @("-m", "pip", "install", "-e", ".[hearthstone]")
 Invoke-Step "python" @("-m", "pip", "install", "pyinstaller")
+
+# 清理 pip install -e . 生成的 .egg-info 目录
+$eggInfoDir = Join-Path $repoRoot "ntetoolbox.egg-info"
+if (Test-Path $eggInfoDir) {
+    Remove-Item -Recurse -Force $eggInfoDir
+    Write-Host "       Cleaned up $eggInfoDir" -ForegroundColor DarkGray
+}
 
 # 2. PyInstaller 构建（onedir）
 Set-Location $repoRoot
