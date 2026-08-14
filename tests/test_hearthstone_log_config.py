@@ -20,11 +20,74 @@ from hscoach.log_config import (
     LOG_CONFIG_CONTENT,
     ensure_log_config,
     hearthstone_data_dir,
+    hearthstone_install_dir,
     log_config_path,
     power_log_path,
     restore_log_config,
     tail_power_log,
 )
+
+
+class InstallDirDetectionTest(unittest.TestCase):
+    """自定义安装目录（如 C:\\bz\\Hearthstone）必须通过注册表兜底发现。
+
+    回归（用户实测）：炉石装在 C:\\bz\\Hearthstone，候选列表只有
+    Program Files 两处 → hearthstone_install_dir() 返回 None →
+    power_log_path() 错误回退到 LocalAppData → 永远 tail 不到 Power.log。
+    注册表 HKLM/HKCU Uninstall\\Hearthstone 的 InstallLocation 是可靠来源。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_fake_install(self, name: str = "Hearthstone") -> Path:
+        install = Path(self.tmp) / name
+        install.mkdir(parents=True, exist_ok=True)
+        (install / "Hearthstone.exe").write_text("fake", encoding="utf-8")
+        return install
+
+    def test_registry_install_dir_used_when_candidates_miss(self):
+        """候选目录都不存在时，用注册表 InstallLocation 找到安装目录。"""
+        fake_install = self._make_fake_install()
+        with (
+            patch("hscoach.log_config._HEARTHSTONE_INSTALL_CANDIDATES", []),
+            patch(
+                "hscoach.log_config._registry_install_dirs",
+                return_value=[fake_install],
+            ),
+        ):
+            self.assertEqual(hearthstone_install_dir(), fake_install)
+
+    def test_registry_dir_without_exe_is_skipped(self):
+        """注册表路径存在但目录里没有 Hearthstone.exe → 跳过，返回 None。"""
+        bogus = Path(self.tmp) / "bogus"
+        bogus.mkdir(parents=True, exist_ok=True)  # 无 Hearthstone.exe
+        with (
+            patch("hscoach.log_config._HEARTHSTONE_INSTALL_CANDIDATES", []),
+            patch("hscoach.log_config._registry_install_dirs", return_value=[bogus]),
+        ):
+            self.assertIsNone(hearthstone_install_dir())
+
+    def test_candidates_take_priority_over_registry(self):
+        """候选目录命中时不依赖注册表（保持原有优先级）。"""
+        candidate_install = self._make_fake_install("CandidateHs")
+        registry_install = self._make_fake_install("RegistryHs")
+        with (
+            patch(
+                "hscoach.log_config._HEARTHSTONE_INSTALL_CANDIDATES",
+                [candidate_install],
+            ),
+            patch(
+                "hscoach.log_config._registry_install_dirs",
+                return_value=[registry_install],
+            ),
+        ):
+            self.assertEqual(hearthstone_install_dir(), candidate_install)
 
 
 class LogConfigTest(unittest.TestCase):

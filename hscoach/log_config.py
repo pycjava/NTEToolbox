@@ -35,9 +35,40 @@ _HEARTHSTONE_INSTALL_CANDIDATES = [
 ]
 
 
+def _registry_install_dirs() -> list[Path]:
+    """从注册表 Uninstall 键读炉石安装目录（自定义安装路径兜底）。
+
+    战网安装炉石时无论装到哪个盘，都会写
+    Uninstall\\Hearthstone 的 InstallLocation（如 C:\\bz\\Hearthstone）。
+    仅 Windows；任何读注册表失败都静默跳过（返回已收集到的部分）。
+    """
+    if sys.platform != "win32":
+        return []
+    import winreg
+
+    results: list[Path] = []
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for sub in (
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Hearthstone",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Hearthstone",
+        ):
+            try:
+                with winreg.OpenKey(root, sub) as key:
+                    location, _ = winreg.QueryValueEx(key, "InstallLocation")
+            except OSError:
+                continue
+            if location:
+                results.append(Path(location))
+    return results
+
+
 def hearthstone_install_dir() -> Path | None:
-    """返回炉石安装目录。"""
-    for candidate in _HEARTHSTONE_INSTALL_CANDIDATES:
+    """返回炉石安装目录。
+
+    先查常见候选目录，再兜底注册表 InstallLocation（自定义安装路径，
+    如 C:\\bz\\Hearthstone——候选写死会漏检导致 Power.log 永远找不到）。
+    """
+    for candidate in [*_HEARTHSTONE_INSTALL_CANDIDATES, *_registry_install_dirs()]:
         if (candidate / "Hearthstone.exe").exists():
             return candidate
     return None
